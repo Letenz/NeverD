@@ -15,6 +15,8 @@
 #include "Limits.h"
 #include "SymMBADetail.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -191,13 +193,14 @@ bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
 }
 
 // One concrete input is sufficient to reject a zero identity, never to grant
-// a replacement. Evaluate parity with every actual variable set to one, then
-// zero; never assign independent values to correlated opaque subexpressions.
-bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
-                          Resources &Res) {
+// a replacement. First try all-odd assignments cheaply. If those fail, count
+// the exact trailing zeros of even factors at a few complete assignments.
+// Correlated subexpressions always see the same actual input values.
+bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
+                              Resources &Res, unsigned Needed) {
   std::map<uint32_t, std::optional<bool>> Values;
   size_t Work = 0;
-  bool VariableValue = true;
+  uint64_t VariableValue = 1;
   auto Read = [&](auto &&Self, SymRef R,
                   unsigned Depth) -> std::optional<bool> {
     if (Work >= limits::kMaxResidueWitnessWork ||
@@ -208,7 +211,7 @@ bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
     // Native literals and assigned input leaves need neither an APInt copy
     // nor a map entry. Their parity is already stored inline.
     if (Op == SymOp::Var)
-      return VariableValue;
+      return bool(VariableValue & 1);
     if (Ctx.isConst(R) && Ctx.width(R) <= std::numeric_limits<uint64_t>::digits)
       return bool(Ctx.node(R).Aux & 1);
     if (auto It = Values.find(R.index()); It != Values.end())
@@ -285,6 +288,59 @@ bool hasOddProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
       }
     }
     if (AllOdd)
+      return true;
+    if (Res.Failed || Work >= limits::kMaxResidueWitnessWork)
+      return false;
+  }
+  auto ZerosAt = [&](SymRef Factor) -> std::optional<unsigned> {
+    llvm::SmallVector<SymRef, 16> Pending{Factor};
+    llvm::SmallDenseSet<uint32_t, 16> Seen;
+    while (!Pending.empty()) {
+      const auto R = Pending.pop_back_val();
+      if (Ctx.width(R) > 64 || Work >= limits::kMaxResidueWitnessWork ||
+          !Res.charge(1))
+        return std::nullopt;
+      ++Work;
+      if (Seen.contains(R.index()))
+        continue;
+      const auto Count = Ctx.numOperands(R);
+      const size_t Units = 3 + Count;
+      if (Units > limits::kMaxResidueWitnessWork - Work ||
+          !Res.charge(
+              Units,
+              (sizeof(SymNode) + 8 * sizeof(uint32_t) + 12 * sizeof(void *)) +
+                  Count * (2 * sizeof(SymRef) + sizeof(uint32_t))))
+        return std::nullopt;
+      Work += Units;
+      Seen.insert(R.index());
+      Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
+    }
+    SymEvalPlan Plan(Ctx, Factor);
+    const auto Value =
+        Plan.evalU64With([&](uint32_t) { return VariableValue; });
+    return unsigned(std::countr_zero(Value));
+  };
+  for (uint64_t Input : {uint64_t(0), uint64_t(1), uint64_t(2)}) {
+    VariableValue = Input;
+    Values.clear();
+    unsigned TotalZeros = 0;
+    bool Complete = true;
+    for (auto F : Factors) {
+      auto V = Read(Read, F, 0);
+      if (!V || Res.Failed) {
+        Complete = false;
+        break;
+      }
+      if (!*V) {
+        auto Zeros = ZerosAt(F);
+        if (!Zeros || *Zeros >= Needed - TotalZeros) {
+          Complete = false;
+          break;
+        }
+        TotalZeros += *Zeros;
+      }
+    }
+    if (Complete)
       return true;
     if (Res.Failed || Work >= limits::kMaxResidueWitnessWork)
       return false;
@@ -1984,7 +2040,7 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
             if (!WitnessChecked && !Res.Failed &&
                 Needed <= limits::kMaxAffineResidueTableBits) {
               WitnessChecked = true;
-              Nonzero = hasOddProductWitness(Ctx, Operands, Res);
+              Nonzero = hasNonzeroProductWitness(Ctx, Operands, Res, Needed);
             }
             return false;
           },

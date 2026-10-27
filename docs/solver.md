@@ -123,6 +123,10 @@ still test the unavailable-backend contract. Scaled-product tests compare the
 built-in circuit with independent long multiplication and integer arithmetic
 through 257 bits. Z3 tests prove agreement with a separate full-width encoding
 and retain high input bits and deliberately wrong high output bits.
+Repeated factors use shared squared powers in the Z3 encoding instead of a
+linear multiplication chain. Complete-word integer oracles cover factor counts
+around powers of two through 129 repetitions, widths 1–257, scaled products and
+correlated factors. Near misses still require full input counterexample models.
 
 ```sh
 build-release/bin/NeverDSolverTests --gtest_brief=1

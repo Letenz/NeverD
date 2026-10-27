@@ -8,6 +8,8 @@
 
 #include "neverd/solver/Z3Solver.h"
 
+#include "llvm/ADT/SmallVector.h"
+
 using namespace neverd::solver;
 using namespace neverd::symbolic;
 
@@ -167,6 +169,55 @@ TEST(Z3Solver, ScaledProductsKeepFullWordsAndIndependentInputModels) {
           const auto Different =
               Expected ^ llvm::APInt(Width, 1).shl(Width - 1);
           Z3Solver ModelSolver(Ctx);
+          ASSERT_TRUE(ModelSolver.assertEqual(X, Ctx.mkConst(XV)));
+          ASSERT_TRUE(ModelSolver.assertEqual(Y, Ctx.mkConst(YV)));
+          ASSERT_TRUE(
+              ModelSolver.assertDistinct(Product, Ctx.mkConst(Different)));
+          ASSERT_EQ(ModelSolver.check(), SatResult::Sat)
+              << ModelSolver.reasonUnknown();
+          ASSERT_TRUE(ModelSolver.model().value(Ctx, X));
+          ASSERT_TRUE(ModelSolver.model().value(Ctx, Y));
+          EXPECT_EQ(*ModelSolver.model().value(Ctx, X), XV);
+          EXPECT_EQ(*ModelSolver.model().value(Ctx, Y), YV);
+        }
+      }
+}
+
+TEST(Z3Solver, RepeatedProductsKeepAllFactorsAndCompleteInputModels) {
+  if (!Z3Solver::available())
+    GTEST_SKIP() << "Z3 backend disabled";
+  for (unsigned Width : {1u, 8u, 32u, 64u, 65u, 257u})
+    for (unsigned Count : {7u, 8u, 9u, 63u, 64u, 65u, 128u, 129u})
+      for (unsigned Shift : {0u, Width - 1}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << Count << ':' << Shift);
+        SymContext Ctx;
+        const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+        const auto Other = Ctx.mkAdd(X, Y);
+        const auto Scale = llvm::APInt(Width, 3).shl(Shift);
+        llvm::SmallVector<SymRef, 16> Factors{Ctx.mkConst(Scale)};
+        Factors.append(Count, X);
+        Factors.append(Count + 1, Other);
+        const auto Product = Ctx.mkMul(Factors);
+        for (unsigned Trial = 0; Trial < 2; ++Trial) {
+          const auto XV = llvm::APInt::getAllOnes(Width) - Trial;
+          const auto YV = !Trial && Width > 1
+                              ? llvm::APInt(Width, 1).shl(Width - 1)
+                              : llvm::APInt(Width, Trial);
+          auto Expected = Scale;
+          // The oracle deliberately multiplies each complete original word.
+          for (unsigned I = 0; I < Count; ++I)
+            Expected *= XV;
+          for (unsigned I = 0; I <= Count; ++I)
+            Expected *= XV + YV;
+          Z3Solver Solver(Ctx);
+          ASSERT_TRUE(Solver.assertEqual(X, Ctx.mkConst(XV)));
+          ASSERT_TRUE(Solver.assertEqual(Y, Ctx.mkConst(YV)));
+          ASSERT_TRUE(Solver.assertDistinct(Product, Ctx.mkConst(Expected)));
+          ASSERT_EQ(Solver.check(), SatResult::Unsat) << Solver.reasonUnknown();
+          Z3Solver ModelSolver(Ctx);
+          const auto Different =
+              Expected ^ llvm::APInt(Width, 1).shl(Width - 1);
           ASSERT_TRUE(ModelSolver.assertEqual(X, Ctx.mkConst(XV)));
           ASSERT_TRUE(ModelSolver.assertEqual(Y, Ctx.mkConst(YV)));
           ASSERT_TRUE(
