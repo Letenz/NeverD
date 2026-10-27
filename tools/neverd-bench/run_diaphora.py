@@ -38,7 +38,8 @@ def export(output, result, profile):
     if identity is None:
         raise RuntimeError("IDA input SHA-256 is unavailable")
     result.update(input_sha256=identity.hex(), ida_version=ida_kernwin.get_kernel_version(),
-                  database_path=str(output), profile=profile)
+                  database_path=str(output), profile=profile,
+                  image_base=hex(ida_nalt.get_imagebase()))
     if profile["decompiler"]:
         import ida_hexrays
 

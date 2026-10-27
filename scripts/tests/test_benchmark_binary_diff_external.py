@@ -188,7 +188,7 @@ class NativeReceiptTests(unittest.TestCase):
                 "diaphora_ida": mock.Mock(CIDABinDiff=mock.Mock(return_value=exporter)),
                 "ida_auto": mock.Mock(auto_wait=mock.Mock(return_value=True)),
                 "ida_hexrays": mock.Mock(), "ida_kernwin": mock.Mock(get_kernel_version=lambda: "9.4"),
-                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0]))),
+                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0])), get_imagebase=lambda: 0),
                 "ida_pro": mock.Mock(qexit=mock.Mock(side_effect=SystemExit(1)))}
         env = {"NEVERD_BENCH_DIAPHORA_MODE": "export", "NEVERD_BENCH_DIAPHORA_OUTPUT": str(output),
                "NEVERD_BENCH_DIAPHORA_SOURCE": str(self.root),
@@ -235,7 +235,7 @@ class NativeReceiptTests(unittest.TestCase):
                 "diaphora_ida": mock.Mock(CIDABinDiff=mock.Mock(return_value=exporter)),
                 "ida_auto": mock.Mock(auto_wait=lambda: True), "ida_hexrays": None,
                 "ida_kernwin": mock.Mock(get_kernel_version=lambda: "9.4", user_cancelled=lambda: False),
-                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0]))),
+                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0])), get_imagebase=lambda: 0),
                 "ida_pro": mock.Mock(qexit=mock.Mock(side_effect=SystemExit(0)))}
         env = {"NEVERD_BENCH_DIAPHORA_MODE": "export", "NEVERD_BENCH_DIAPHORA_OUTPUT": str(output),
                "NEVERD_BENCH_DIAPHORA_SOURCE": str(self.root),
