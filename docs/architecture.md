@@ -7095,7 +7095,8 @@ the frame setup itself, `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): a
 byte 0x55 followed by any move opcode starts no function inside an
 instruction.
 
-A whole unit (`neverd_decompile_all`, in every language) begins with a
+A whole unit (`neverd_decompile_all`, in every language, or the unit of a
+selection `neverd_decompile_functions` writes) begins with a
 `/* neverd.not-decompiled: NAME at 0xENTRY: REASON */` line for each function
 the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
 `RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
@@ -13452,15 +13453,45 @@ its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The
 same proof supplies stack annotations and saved-register recovery.
 
-Shared source stack preparation rejects exact entry-relative loads reached by
+Shared source stack preparation finds exact entry-relative loads reached by
 an x86 CALL return-slot write that the reconstructed C frame does not contain.
 It reuses the ABI owner's current-SP walk and original call/jump encoding
 policy; a synthetic tail call supplies no push. Explicit later stores kill only
 the bytes they write on each incoming path. Unknown call positions, incomplete
 candidate graphs and exhausted observation budgets cannot grant separation.
-Both source routes receive the same conversion diagnostic before cleanup can
-forward an old constant. This guard neither materializes a relocatable return
-PC nor certifies unresolved addresses, callee memory effects or other targets.
+Each such load is recorded on its function, not refused at conversion. Whether
+the function observes the loaded value depends on call arguments and returns
+that only call ABI recovery settles. A GCC `pop` that discards an argument
+slot after a call reads such bytes into a register nothing uses.
+
+After that recovery, and before either source route's cleanup, the function
+is refused if the settled MedIR still observes the value. Copies, byte views
+and joins only move it. Other observers are an operation, a settled call
+argument, a call clobber or an exceptional entry naming it. While a register
+holds it, they include another variable over that register, a call without
+settled arguments that may read the register, and a RETURN that reads it. A
+direct call to a function of this run reads no argument register at or past
+that function's emitted integer arity — the parameters both C routes pass a
+defined callee, bounded by its recovered and declared parameters — so a
+register beyond them, such as the slot a GCC `pop` discards after a call to a
+one-argument free routine, is not passed. HighC gives a call the prototype
+of the definition that took the call's identifier at its address, also where
+definitions share a source name; LLVMC coerces the call to the callee's
+function type. A complete overwrite or a clobbering call ends the register's
+copy.
+Both routes report the same diagnostic, which names what observes the value.
+No pass between the two checks forwards a stored value into, or rewrites, such
+a load. This guard neither materializes a relocatable return PC nor certifies
+unresolved addresses, callee memory effects or other targets.
+
+A whole-image run leaves a refused function out and continues, and so does a
+unit of selected functions (`neverd_decompile_functions`, `--func --callees`),
+which is written as the whole program is (`OmitRefusedFunctions`). The audit
+records `med-ir-failed` with the diagnostic, which the unit names in a
+`neverd.not-decompiled` note. Any other run restricted to requested functions,
+such as a view of one function, still fails with the diagnostic, as does
+`--callees` when the function it names is refused. The lift and patch routes
+check again after this proof that every requested function was admitted.
 
 SSA liveness includes the implicit full-width SP read of a physical x86 CALL.
 This keeps an exception handler's frame live when its continuation calls before

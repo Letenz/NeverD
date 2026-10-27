@@ -2638,7 +2638,8 @@ unsigned parameters/constants, both extension kinds, wrapping addition, byte
 extraction and narrowing casts at O0/O2. The shared constant-address evaluator
 now applies those views at their declared widths instead of stripping them.
 
-Both the pinned r6 SDK and the native LLVM fork pass 95 focused tests. Per SDK,
+Both the pinned r6 SDK and the native LLVM fork pass 100 focused tests on
+integration `8bcd359a15`: the 95 core regressions and five XBEGIN tests. Per SDK,
 the atomic segment target covers 1,008 decode/lift combinations, 120 malformed
 contracts, 24 wrapped offsets and 12 descriptor-state refusals. Its 72 source
 profiles produce 360 objects; compact and four-source regressions add 810.
@@ -2647,8 +2648,16 @@ controlled i386 completions. The final mixed-role fixtures retain byte-identical
 C, IR and external native-object inputs; COFF timestamp bytes and command
 temporary paths are the only normalized differences. The
 [qualification record](evidence/x86-atomic-segments-2026-10-27.json) identifies
-code commits `06f7628d0f` and `270a66d88b`, integration `048f7be35f`, toolchain
-revisions, corpus inventories and hashed reports.
+code commits `06f7628d0f` and `270a66d88b`, integrations `048f7be35f` and
+`8bcd359a15`, toolchain revisions, corpus inventories and hashed reports.
+The final integration also checks 65,540 immediate-size metadata cases against
+each rebuilt Capstone library, plus the generated full/reduced tables. XBEGIN
+adds 1,572,864 rel16 checks, 1,656 prefix/wrap cases and 120 native/C objects
+per SDK in a separate corpus. Eight additional pinned-SDK AArch64 pointer and
+raw-SP regressions cover the shared source boundary. All tests pass without
+skips; the ordinary GS checks execute 40 loads per SDK. Code publication
+`bd665c5a16` adds a reviewed upstream symbolic-window size guard; its native
+x86 and C address code is identical to the qualified snapshot.
 
 LLVM already supplies the four `.legacy.address32` intrinsic interfaces and
 segment controls. This change requires no new LLVM builtin, release or SDK
