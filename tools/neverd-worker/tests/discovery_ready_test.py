@@ -55,7 +55,12 @@ def run(executable):
             snapshot = ok(client, "analysis_snapshot", revision=opened["revision"])
             assert snapshot["project_id"] == opened["project_id"], snapshot
             assert Path(snapshot["payload"]["open"]["path"]).resolve() == binary.resolve()
-            assert not Path(str(binary) + ".rebuild").exists(), "Snapshot queued behind the listing rebuild"
+            # The reply records the state when the serialized executor served
+            # this request. The worker may start rebuilding before the client
+            # gets scheduled again, so a later filesystem read cannot prove
+            # which operation ran first.
+            assert snapshot["background"]["state"] == "pending", snapshot
+            assert "functions" not in snapshot["background"], snapshot
             Path(str(binary) + ".continue").touch()
             indexed = client.next(lambda m: m.get("type") == "heartbeat"
                                   and m.get("project_id") == opened["project_id"]
