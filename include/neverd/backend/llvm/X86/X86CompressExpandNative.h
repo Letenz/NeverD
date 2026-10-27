@@ -17,6 +17,14 @@
 #include <string_view>
 #include <vector>
 namespace neverd {
+inline unsigned x86CompactNativePrefix(const X86CompactControl &C,
+                                       NdMemoryAddressSpace Space) {
+  return C.SegmentPrefix |
+         (Space == NdMemoryAddressSpace::X86FS   ? 0x64
+          : Space == NdMemoryAddressSpace::X86GS ? 0x65
+                                                 : 0) |
+         (C.StackReference ? X86NativeStackReference : 0);
+}
 inline constexpr std::string_view X86CompactAsmMarker = "# neverd.x86.compact ";
 struct X86CompactPlan {
   bool Expand;

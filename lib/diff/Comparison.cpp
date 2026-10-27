@@ -758,31 +758,75 @@ unsigned Matcher::approximate() {
         RivalsOfB.push_back(O.A);
     }
     if (!RivalsOfA.empty() || !RivalsOfB.empty()) {
-      Tie T{FunctionStep::Similarity, {Pair.A}, {Pair.B}};
-      T.Primary.insert(T.Primary.end(), RivalsOfB.begin(), RivalsOfB.end());
-      T.Secondary.insert(T.Secondary.end(), RivalsOfA.begin(), RivalsOfA.end());
-      for (uint32_t A : T.Primary)
+      UndecidedA.insert(Pair.A);
+      UndecidedB.insert(Pair.B);
+      for (uint32_t A : RivalsOfB)
         UndecidedA.insert(A);
-      for (uint32_t B : T.Secondary)
+      for (uint32_t B : RivalsOfA)
         UndecidedB.insert(B);
-      NearTies.push_back(std::move(T));
       continue;
     }
     Paired += pair(Pair.A, Pair.B, FunctionStep::Similarity, false);
   }
+  // Retain every endpoint's near-best remaining alternatives, including
+  // endpoints already deferred by another tie. Each group is a star: combining
+  // the two endpoints' rivals would invent unmeasured cross-pairs.
+  const auto Retain = [&](bool Secondary, uint32_t F) {
+    if (Secondary ? SMatch[F] != NoIndex : PMatch[F] != NoIndex)
+      return;
+    const auto &ByFunction = Secondary ? ByB : ByA;
+    const auto It = ByFunction.find(F);
+    if (It == ByFunction.end())
+      return;
+    std::vector<uint32_t> Others;
+    double Best = -1;
+    for (uint32_t I : It->second) {
+      const Scored &Pair = Pairs[I];
+      if (Secondary ? PMatch[Pair.A] != NoIndex : SMatch[Pair.B] != NoIndex)
+        continue;
+      if (Best < 0)
+        Best = Pair.Exact;
+      if (Best < Settings.MinimumSimilarity ||
+          (Pair.Exact < Best && Best - Pair.Exact >= Settings.AmbiguityMargin))
+        break;
+      Others.push_back(Secondary ? Pair.A : Pair.B);
+    }
+    if (Others.size() > 1)
+      NearTies.push_back(
+          Secondary ? Tie{FunctionStep::Similarity, std::move(Others), {F}}
+                    : Tie{FunctionStep::Similarity, {F}, std::move(Others)});
+  };
+  for (uint32_t A : Ps)
+    Retain(false, A);
+  for (uint32_t B : Ss)
+    Retain(true, B);
   return Paired;
 }
 
 void Matcher::collectAmbiguities() {
-  std::vector<uint8_t> InPrimary(P.Functions.size(), 0),
-      InSecondary(S.Functions.size(), 0);
-  const auto Record = [&](Tie T) {
+  std::vector<uint32_t> InPrimary(P.Functions.size(), NoIndex),
+      InSecondary(S.Functions.size(), NoIndex);
+  const auto Record = [&](Tie T, bool Exact) {
     llvm::erase_if(T.Primary, [&](uint32_t A) {
-      return PMatch[A] != NoIndex || InPrimary[A];
+      return PMatch[A] != NoIndex || (Exact && InPrimary[A] != NoIndex);
     });
     llvm::erase_if(T.Secondary, [&](uint32_t B) {
-      return SMatch[B] != NoIndex || InSecondary[B];
+      return SMatch[B] != NoIndex || (Exact && InSecondary[B] != NoIndex);
     });
+    if (!Exact) {
+      // Exact groups already retain their full cross-product compactly.
+      // Remove only those covered edges from a similarity star; sharing an
+      // endpoint alone must not discard another measured alternative.
+      const auto Covered = [&](uint32_t A, uint32_t B) {
+        return InPrimary[A] != NoIndex && InPrimary[A] == InSecondary[B];
+      };
+      if (T.Primary.size() == 1)
+        llvm::erase_if(T.Secondary,
+                       [&](uint32_t B) { return Covered(T.Primary[0], B); });
+      else if (T.Secondary.size() == 1)
+        llvm::erase_if(T.Primary,
+                       [&](uint32_t A) { return Covered(A, T.Secondary[0]); });
+    }
     llvm::sort(T.Primary);
     T.Primary.erase(std::unique(T.Primary.begin(), T.Primary.end()),
                     T.Primary.end());
@@ -791,10 +835,12 @@ void Matcher::collectAmbiguities() {
                       T.Secondary.end());
     if (T.Primary.empty() || T.Secondary.empty())
       return;
-    for (uint32_t A : T.Primary)
-      InPrimary[A] = 1;
-    for (uint32_t B : T.Secondary)
-      InSecondary[B] = 1;
+    if (Exact) {
+      for (uint32_t A : T.Primary)
+        InPrimary[A] = R.Ambiguities.size();
+      for (uint32_t B : T.Secondary)
+        InSecondary[B] = R.Ambiguities.size();
+    }
     R.Ambiguities.push_back(
         {T.Step, std::move(T.Primary), std::move(T.Secondary)});
   };
@@ -807,12 +853,12 @@ void Matcher::collectAmbiguities() {
   for (FunctionStep Step : GlobalSteps) {
     std::vector<Entry> Entries;
     for (uint32_t A = 0; A < P.Functions.size(); ++A)
-      if (PMatch[A] == NoIndex && !InPrimary[A])
+      if (PMatch[A] == NoIndex && InPrimary[A] == NoIndex)
         if (const uint64_t K = stepKey(Step, PF.Functions[A], P.Functions[A],
                                        Settings.UseNames))
           Entries.push_back({K, 0, A});
     for (uint32_t B = 0; B < S.Functions.size(); ++B)
-      if (SMatch[B] == NoIndex && !InSecondary[B])
+      if (SMatch[B] == NoIndex && InSecondary[B] == NoIndex)
         if (const uint64_t K = stepKey(Step, SF.Functions[B], S.Functions[B],
                                        Settings.UseNames))
           Entries.push_back({K, 1, B});
@@ -830,11 +876,22 @@ void Matcher::collectAmbiguities() {
       // A lone pair left here was refused by an override.
       if (!T.Primary.empty() && !T.Secondary.empty() &&
           T.Primary.size() + T.Secondary.size() > 2)
-        Record(std::move(T));
+        Record(std::move(T), true);
     }
   }
   for (Tie &T : NearTies)
-    Record(std::move(T));
+    Record(std::move(T), false);
+  const auto Key = [](const Ambiguity &A) {
+    return std::tie(A.Primary, A.Secondary, A.Step);
+  };
+  llvm::sort(R.Ambiguities, [&](const Ambiguity &A, const Ambiguity &B) {
+    return Key(A) < Key(B);
+  });
+  R.Ambiguities.erase(std::unique(R.Ambiguities.begin(), R.Ambiguities.end(),
+                                  [&](const Ambiguity &A, const Ambiguity &B) {
+                                    return Key(A) == Key(B);
+                                  }),
+                      R.Ambiguities.end());
 }
 
 /// The confidence of a measured pair.

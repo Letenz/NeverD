@@ -1293,6 +1293,12 @@ std::optional<Address> MainWindow::currentFunction() const {
   return disassembly_ ? disassembly_->currentFunction() : std::nullopt;
 }
 
+std::optional<Address> MainWindow::commandFunction() const {
+  if (const CodeView *code = focusedCodeView())
+    return code->text()->function();
+  return currentFunction();
+}
+
 std::optional<Address> MainWindow::pathfinderTarget() const {
   if (const CodeView *code = focusedCodeView())
     return code->text()->function();
@@ -1939,11 +1945,11 @@ void MainWindow::connectActions() {
       session_.createFunction(*address);
   });
   on(ActionId::EditFunction, [this] {
-    if (const auto function = currentFunction())
+    if (const auto function = commandFunction())
       editFunction(*function);
   });
   on(ActionId::EditDeleteFunction, [this] {
-    if (const auto function = currentFunction())
+    if (const auto function = commandFunction())
       session_.deleteFunction(*function);
   });
   // An operand's number shows in the base the user picks, with its sign or
@@ -2468,12 +2474,14 @@ void MainWindow::updateActions() {
   const auto function = functionEdits ? currentFunction() : std::nullopt;
   actions_.action(ActionId::EditCreateFunction)
       ->setEnabled(functionEdits && function != currentAddress());
+  // A code window's commands take the function it shows.
+  const auto shown = functionEdits ? commandFunction() : std::nullopt;
   actions_.action(ActionId::EditDeleteFunction)
-      ->setEnabled(functionEdits && function.has_value());
+      ->setEnabled(functionEdits && shown.has_value());
   const bool functionAttributes =
       functionEdits && session_.statesFunctionAttributes();
   actions_.action(ActionId::EditFunction)
-      ->setEnabled(functionAttributes && function.has_value());
+      ->setEnabled(functionAttributes && shown.has_value());
   functions_->enableCommand(ChooserCommand::Edit, functionAttributes);
   if (focusFunctions_)
     focusFunctions_->enableCommand(ChooserCommand::Edit, functionAttributes);
@@ -2514,8 +2522,12 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::EditSetType)
       ->setEnabled(declarations && (code ? code->text()->function().has_value()
                                          : currentFunction().has_value()));
-  for (const auto id : {ActionId::EditStackFrame, ActionId::EditStackPointer,
-                        ActionId::EditStackOperand})
+  // The stack variables are a code window's own function's; an instruction's
+  // SP and operand are the disassembly's.
+  actions_.action(ActionId::EditStackFrame)
+      ->setEnabled(location && !session_.readOnly() &&
+                   commandFunction().has_value());
+  for (const auto id : {ActionId::EditStackPointer, ActionId::EditStackOperand})
     actions_.action(id)->setEnabled(location && !session_.readOnly() &&
                                     currentFunction().has_value());
   const bool variableView =
@@ -4569,17 +4581,16 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   // IDA offers the function's own dialog after its cross references.
   if (auto *edit = actions_.action(ActionId::EditFunction); edit->isEnabled())
     menu.addAction(edit);
-  // The disassembly's function also opens its stack variables, and an
-  // instruction the SP it leaves, where a wrong SP shows. A pseudocode
-  // window's function can differ from the disassembly's, which these edit.
-  if (!focusedCodeView()) {
-    if (auto *frame = actions_.action(ActionId::EditStackFrame);
-        frame->isEnabled())
-      menu.addAction(frame);
-    if (auto *pointer = actions_.action(ActionId::EditStackPointer);
-        pointer->isEnabled() && disassembly_->onInstruction())
-      menu.addAction(pointer);
-  }
+  // The function also opens its stack variables, whose names the code
+  // windows show too, and the disassembly an instruction's SP, where a wrong
+  // SP shows.
+  if (auto *frame = actions_.action(ActionId::EditStackFrame);
+      frame->isEnabled())
+    menu.addAction(frame);
+  if (auto *pointer = actions_.action(ActionId::EditStackPointer);
+      pointer->isEnabled() && !focusedCodeView() &&
+      disassembly_->onInstruction())
+    menu.addAction(pointer);
   // IDA's Pathfinding: the function under the cursor joins the call path,
   // or starts a new one.
   if (auto *add = actions_.action(ActionId::PathfinderAddWaypoint);
@@ -4641,11 +4652,16 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
       }
     }
   }
+  // Item definitions are the disassembly's: a code window's handlers ignore
+  // them, and a new function would start at the disassembly's cursor. A
+  // code window deletes the function it shows.
   for (const auto id :
        {ActionId::EditCreateFunction, ActionId::EditDeleteFunction,
         ActionId::EditDefineCode, ActionId::EditDefineData,
         ActionId::EditDefineString, ActionId::EditUndefine})
-    if (auto *action = actions_.action(id); action->isEnabled())
+    if (auto *action = actions_.action(id);
+        action->isEnabled() &&
+        (!focusedCodeView() || id == ActionId::EditDeleteFunction))
       menu.addAction(action);
   // A data item also takes an array or an alignment.
   if (!focusedCodeView() && disassembly_->onData())
@@ -4945,7 +4961,11 @@ void MainWindow::editDataPresentation(const QString &kind) {
 }
 
 void MainWindow::editStackFrame(int mode) {
-  const auto function = currentFunction();
+  // A code window's stack variables are those of the function it shows; an
+  // instruction's SP and operand are the disassembly's.
+  const QPointer<CodeView> code = mode == 0 ? focusedCodeView() : nullptr;
+  const bool fromCode = code;
+  const auto function = fromCode ? code->text()->function() : currentFunction();
   const auto address = currentAddress();
   if (!function || session_.readOnly())
     return;
@@ -4954,10 +4974,13 @@ void MainWindow::editStackFrame(int mode) {
   const QPointer<QWidget> owner = commandWindow();
   session_.read(
       "stack_frame", {{"address", hexAddress(*function)}}, this,
-      [this, function, address, epoch, revision, owner,
-       mode](const QJsonObject &reply) {
+      [this, function, address, epoch, revision, owner, mode, code,
+       fromCode](const QJsonObject &reply) {
+        const auto now = !fromCode ? currentFunction()
+                         : code    ? code->text()->function()
+                                   : std::nullopt;
         if (!owner || session_.epoch() != epoch ||
-            session_.revision() != revision || currentFunction() != function)
+            session_.revision() != revision || now != function)
           return;
         auto policy = reply.value("policy").toObject();
         policy.remove("input_sha256");

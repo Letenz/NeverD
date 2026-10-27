@@ -26,11 +26,7 @@ llvm::Value *MedLLVMEmitter::emitX86CompressExpand(const MedOp &Op,
       !x86CompactShapeIsValid(Id, S))
     throw std::invalid_argument(X86CompactMalformed);
   const auto C = *x86CompactControl(Id, *S.Control);
-  const unsigned Prefix =
-      (S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-       : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                             : 0) |
-      (C.StackReference ? X86NativeStackReference : 0);
+  const unsigned Prefix = x86CompactNativePrefix(C, S.MemoryAddressSpace);
   const auto P = *x86CompactPlan(Id == Intrinsic::EVEXExpandLoad, S.Sizes[2],
                                  C.Kind, C.Zero, Prefix);
   auto *F = B.GetInsertBlock()->getParent();
@@ -41,12 +37,18 @@ llvm::Value *MedLLVMEmitter::emitX86CompressExpand(const MedOp &Op,
   F->addFnAttr("target-features", Features);
   const auto Use = x86CompactOperandUse(P.Bytes / P.elementBytes(), P.Expand,
                                         P.Zero, traceSSAConst(Op.Inputs[2]));
-  // Resolve only observed DS pointers or segment-relative FS/GS offsets.
+  // Resolve only observed DS pointers or raw offsets in the selected segment.
   // Suppressed operands may be arbitrary without consuming unknown state.
-  llvm::Value *Address =
-      Use.Address ? resolveAtomicMemoryPtr(Op.Inputs[1], 1, B.getInt8Ty(), B,
-                                           S.MemoryAddressSpace)
-                  : llvm::ConstantPointerNull::get(B.getPtrTy());
+  llvm::Value *Address = llvm::ConstantPointerNull::get(B.getPtrTy());
+  if (Use.Address) {
+    if (C.SegmentPrefix) {
+      auto *Offset = B.CreateZExtOrTrunc(getRawSegmentOffset(Op.Inputs[1], B),
+                                         B.getInt32Ty());
+      Address = B.CreateIntToPtr(Offset, B.getPtrTy());
+    } else
+      Address = resolveAtomicMemoryPtr(Op.Inputs[1], 1, B.getInt8Ty(), B,
+                                       S.MemoryAddressSpace);
+  }
   if (Address->getType()->getPointerAddressSpace()) {
     // Transport the segment-relative offset bits. An address-space cast
     // would instead describe a linear address conversion; the native

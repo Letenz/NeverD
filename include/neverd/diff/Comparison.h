@@ -181,8 +181,9 @@ struct FunctionMatch {
   }
 };
 
-/// Functions one feature could not tell apart: no one of them pairs with
-/// any of the others.
+/// Unpaired alternatives retained by one feature. Every primary member is
+/// a candidate for every secondary member. Groups may overlap; a function's
+/// candidates are the union of its incident groups, not a connected component.
 struct Ambiguity {
   FunctionStep Step = FunctionStep::Similarity;
   std::vector<uint32_t> Primary;
@@ -221,10 +222,11 @@ struct ComparisonResult {
   /// In ascending primary address order.
   std::vector<FunctionMatch> Matches;
   std::vector<Ambiguity> Ambiguities;
-  /// Each function's match or ambiguity, by function index; NoIndex for
-  /// none.
+  /// Each function's match, by function index; NoIndex for none.
   std::vector<uint32_t> PrimaryMatch;
   std::vector<uint32_t> SecondaryMatch;
+  /// One incident ambiguity group, or NoIndex. Membership may overlap; these
+  /// lookups classify coverage, but do not enumerate all candidates.
   std::vector<uint32_t> PrimaryAmbiguity;
   std::vector<uint32_t> SecondaryAmbiguity;
   SideCoverage PrimaryCoverage;

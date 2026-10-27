@@ -289,6 +289,33 @@ u64 network_stream(u64 *out, u64 raw) {
   return 0;
 }
 
+u64 network_stream_identity(u64 *out, u64 mode) {
+  unsigned char peer[16] = {2, 0, 0x23, 0x29, 127, 0, 0, 1};
+  int failed = socket(2, 1, 6);
+  if (failed < 0 || connect(failed, peer, sizeof(peer)) != -1 ||
+      *__errno() != 111 || close(failed))
+    return 1;
+  int first = socket(2, 1, 6);
+  if (first < 0 || connect(first, peer, sizeof(peer)))
+    return 2;
+  int alias = dup(first);
+  if (alias < 0 || close(first))
+    return 3;
+  int reused = socket(2, 1, 6);
+  if (reused < 0 || connect(reused, peer, sizeof(peer)))
+    return 4;
+  out[0] = first == failed;
+  out[1] = reused == first;
+  const unsigned char bytes[] = {0, 0xff};
+  int selected = mode < 2 ? alias : reused;
+  // Both routes must identify the retained description's input contract.
+  if (mode & 1)
+    syscall(64, selected, bytes, sizeof(bytes));
+  else
+    send(selected, bytes, sizeof(bytes), 0);
+  return 5;
+}
+
 u64 network_dynamic(u64 *out) {
   void *lib = dlopen("liboffline.so", 2);
   if (!lib)

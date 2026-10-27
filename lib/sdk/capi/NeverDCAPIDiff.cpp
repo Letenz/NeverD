@@ -26,12 +26,14 @@
 #include "neverd/diff/RegionsJSON.h"
 #include "neverd/sdk/Limits.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -40,6 +42,7 @@
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -97,12 +100,97 @@ struct Comparison {
   std::optional<ObservationCache> CachedObservations;
   std::string InventoryKey;
   std::vector<uint32_t> Inventory;
+  struct AmbiguityIndex {
+    std::vector<Ambiguity> Groups;
+    std::vector<std::vector<uint32_t>> Primary, Secondary;
+  };
+  std::optional<AmbiguityIndex> CachedAmbiguities;
 
   void fail(llvm::StringRef Message) {
     std::lock_guard Lock(StatusMutex);
     Error = Message.str();
   }
 };
+
+/// Views whose interpretation depends on the current correspondence.
+void invalidateMappingViews(Comparison &C) {
+  C.CachedDetail.reset();
+  C.CachedSource.reset();
+  C.CachedObservations.reset();
+  C.CachedAmbiguities.reset();
+  C.InventoryKey.clear();
+}
+
+struct CandidateSet {
+  // A single group shares normalized members; only overlaps need a union.
+  const std::vector<uint32_t> *GroupFunctions = nullptr;
+  std::vector<uint32_t> MergedFunctions;
+  std::vector<FunctionStep> Steps;
+
+  llvm::ArrayRef<uint32_t> functions() const {
+    return GroupFunctions ? *GroupFunctions : MergedFunctions;
+  }
+
+  std::string explanation() const {
+    std::string Out;
+    for (auto Step : Steps) {
+      if (!Out.empty())
+        Out += "; ";
+      Out += stepDescription(Step).str();
+    }
+    return Out.empty() ? "No retained ambiguity group for this function" : Out;
+  }
+  llvm::json::Array stepsJSON() const {
+    llvm::json::Array Out;
+    for (auto Step : Steps)
+      Out.push_back(stepName(Step));
+    return Out;
+  }
+};
+
+CandidateSet candidates(Comparison &C, bool Secondary, uint32_t Function) {
+  if (!C.CachedAmbiguities) {
+    Comparison::AmbiguityIndex Index;
+    Index.Groups = C.Result.Ambiguities;
+    Index.Primary.resize(C.Primary.Functions.size());
+    Index.Secondary.resize(C.Secondary.Functions.size());
+    for (uint32_t I = 0; I < Index.Groups.size(); ++I) {
+      auto &Group = Index.Groups[I];
+      for (auto *Members : {&Group.Primary, &Group.Secondary}) {
+        llvm::sort(*Members);
+        Members->erase(std::unique(Members->begin(), Members->end()),
+                       Members->end());
+      }
+      for (uint32_t A : Group.Primary)
+        Index.Primary[A].push_back(I);
+      for (uint32_t B : Group.Secondary)
+        Index.Secondary[B].push_back(I);
+    }
+    C.CachedAmbiguities = std::move(Index);
+  }
+  const auto &Index = *C.CachedAmbiguities;
+  CandidateSet Out;
+  const auto &Groups =
+      Secondary ? Index.Secondary[Function] : Index.Primary[Function];
+  for (uint32_t I : Groups) {
+    const auto &Group = Index.Groups[I];
+    const auto &Others = Secondary ? Group.Primary : Group.Secondary;
+    if (Groups.size() == 1)
+      Out.GroupFunctions = &Others;
+    else
+      Out.MergedFunctions.insert(Out.MergedFunctions.end(), Others.begin(),
+                                 Others.end());
+    Out.Steps.push_back(Group.Step);
+  }
+  llvm::sort(Out.MergedFunctions);
+  Out.MergedFunctions.erase(
+      std::unique(Out.MergedFunctions.begin(), Out.MergedFunctions.end()),
+      Out.MergedFunctions.end());
+  llvm::sort(Out.Steps);
+  Out.Steps.erase(std::unique(Out.Steps.begin(), Out.Steps.end()),
+                  Out.Steps.end());
+  return Out;
+}
 
 void require(bool Condition, llvm::StringRef Message) {
   if (!Condition)
@@ -745,12 +833,9 @@ int neverd_comparison_restore_json_with_progress(
       std::lock_guard Status(C.StatusMutex);
       Control.check();
       C.Result = std::move(Next);
-      C.CachedDetail.reset();
-      C.CachedSource.reset();
-      C.CachedObservations.reset();
+      invalidateMappingViews(C);
       C.CachedSlice.reset();
       C.CachedImpact.reset();
-      C.InventoryKey.clear();
       C.Undo.clear();
       C.Redo.clear();
       C.Outcome = std::move(Outcome);
@@ -785,15 +870,12 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
     const auto &Amb =
         Secondary ? C.Result.SecondaryAmbiguity : C.Result.PrimaryAmbiguity;
     std::optional<uint32_t> Source;
-    const Ambiguity *Group = nullptr;
+    CandidateSet SourceCandidates;
     if (O->get("ambiguous_with")) {
       Source = Other.functionAt(address(*O, "ambiguous_with"));
       require(Source.has_value(),
               "ambiguity source is not in the opposite comparison snapshot");
-      const auto &OtherAmb =
-          Secondary ? C.Result.PrimaryAmbiguity : C.Result.SecondaryAmbiguity;
-      if (*Source < OtherAmb.size() && OtherAmb[*Source] != NoIndex)
-        Group = &C.Result.Ambiguities[OtherAmb[*Source]];
+      SourceCandidates = candidates(C, !Secondary, *Source);
     }
     const auto Kind = string(*O, "kind", "all");
     require(Kind == "all" || Kind == "matched" || Kind == "changed" ||
@@ -841,9 +923,8 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         Order.push_back(I);
       };
       if (Source) {
-        if (Group)
-          for (const auto I : Secondary ? Group->Secondary : Group->Primary)
-            Include(I);
+        for (const auto I : SourceCandidates.functions())
+          Include(I);
       } else {
         for (uint32_t I = 0; I < P.Functions.size(); ++I)
           Include(I);
@@ -893,9 +974,9 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         Row["evidence"] = match(*M);
       }
       if (Ambiguous) {
-        const auto &Group = C.Result.Ambiguities[Amb[I]];
+        const auto Alternatives = candidates(C, Secondary, I);
         llvm::json::Array Candidates;
-        const auto &Others = Secondary ? Group.Primary : Group.Secondary;
+        const auto Others = Alternatives.functions();
         for (size_t N = 0;
              N <
              std::min<size_t>(Others.size(), diffLimits::kDefaultMaxCandidates);
@@ -904,7 +985,8 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         Row["candidate_total"] = Others.size();
         Row["candidate_preview_complete"] = Others.size() == Candidates.size();
         Row["candidates"] = std::move(Candidates);
-        Row["explanation"] = stepDescription(Group.Step);
+        Row["explanation"] = Alternatives.explanation();
+        Row["candidate_steps"] = Alternatives.stepsJSON();
       }
       Rows.push_back(std::move(Row));
     }
@@ -923,13 +1005,10 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
       Out["ambiguity"] = llvm::json::Object{
           {"source_side", Secondary ? "primary" : "secondary"},
           {"source", function(C, Other, *Source)},
-          {"candidate_total",
-           Group ? (Secondary ? Group->Secondary.size() : Group->Primary.size())
-                 : 0},
-          {"active", Group != nullptr},
-          {"explanation",
-           Group ? stepDescription(Group->Step)
-                 : "No retained ambiguity group for this function"}};
+          {"candidate_total", SourceCandidates.functions().size()},
+          {"active", !SourceCandidates.functions().empty()},
+          {"explanation", SourceCandidates.explanation()},
+          {"steps", SourceCandidates.stepsJSON()}};
     return dupStr(jsonToString(std::move(Out)));
   });
 }
@@ -2716,10 +2795,7 @@ int neverd_comparison_override_json(neverd_comparison_t Handle,
     if (auto Error =
             applyOverride(C.Result, C.Primary, C.Secondary, O, &Effect))
       throw std::runtime_error(*Error);
-    C.CachedDetail.reset();
-    C.CachedSource.reset();
-    C.CachedObservations.reset();
-    C.InventoryKey.clear();
+    invalidateMappingViews(C);
     C.Undo.push_back(std::move(Effect));
     C.Redo.clear();
     return 1;
@@ -2731,10 +2807,7 @@ int neverd_comparison_undo(neverd_comparison_t Handle) {
     require(!C.Undo.empty(), "no comparison edit to undo");
     C.Redo.push_back(C.Undo.back().Applied);
     revertOverride(C.Result, C.Primary, C.Secondary, C.Undo.back());
-    C.CachedDetail.reset();
-    C.CachedSource.reset();
-    C.CachedObservations.reset();
-    C.InventoryKey.clear();
+    invalidateMappingViews(C);
     C.Undo.pop_back();
     return 1;
   });
@@ -2747,7 +2820,7 @@ int neverd_comparison_redo(neverd_comparison_t Handle) {
     if (auto Error = applyOverride(C.Result, C.Primary, C.Secondary,
                                    C.Redo.back(), &Effect))
       throw std::runtime_error(*Error);
-    C.CachedSource.reset();
+    invalidateMappingViews(C);
     C.Undo.push_back(std::move(Effect));
     C.Redo.pop_back();
     return 1;

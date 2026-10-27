@@ -33,7 +33,8 @@ inline X86CompactShape x86CompactLowShape(const LowOp &Op,
     S.Sizes[I] = V.Size;
     S.Scalars[I] = V.isConst() || V.isReg() || V.isTemp();
   }
-  if (Op.NumInputs > 4 && Op.Inputs[4].isConst())
+  if (Op.NumInputs > 4 && Op.Inputs[4].isConst() &&
+      !isAddressProvenance(Op.Inputs[4].Provenance))
     S.Control = Op.Inputs[4].Offset;
   return S;
 }

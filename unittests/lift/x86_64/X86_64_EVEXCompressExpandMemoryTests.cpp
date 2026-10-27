@@ -428,11 +428,18 @@ TEST(X86EVEXCompressExpandMemory, I386DSOverrideOwnsTheStackBaseSegment) {
                      : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I),
                 int(Bytes.size()));
       std::vector<LowOp> Ops;
-      if (!Override) {
-        EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
-        continue;
-      }
       ASSERT_NO_THROW(D.liftToLow(I, Ops));
+      const auto It = std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+        return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+               isX86CompactMemory(Intrinsic(Op.Inputs[0].Offset));
+      });
+      ASSERT_NE(It, Ops.end());
+      const auto Control = x86CompactControl(Intrinsic(It->Inputs[0].Offset),
+                                             It->Inputs[4].Offset);
+      ASSERT_TRUE(Control);
+      EXPECT_EQ(Control->SegmentPrefix, Override ? 0u : 0x36u);
+      if (!Override)
+        continue;
       auto Image = image(0x6000, 4);
       Image.Arch = Arch::X86;
       Image.Bits = Bitness::Bits32;

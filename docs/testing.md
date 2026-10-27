@@ -274,6 +274,22 @@ four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
 unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
 unqualified on hosts without those capabilities.
 
+`NeverDX86CompactSegmentTests` checks i386 CS/ES/SS and implicit-stack
+compact memory, all twelve opcode families, all vector widths, addr16/addr32,
+three decoder routes and both lift policies. It rejects mixed control/mode/
+segment contracts and verifies concrete refusal before an active access when
+no descriptor context exists. Its full pipelines compile 270 objects across
+ELF/COFF/Mach-O, default/NoOpt and LLVM/HighC/LLVMC routes. Absolute segment
+offsets deliberately alias an ordinary DS object; stack parameters remain
+scalar offsets. `X86PackedSourceConstants` additionally executes 126 compact
+and four-source constant-input cases at O0/O2 under ASan/UBSan.
+Set `NEVERD_ISA_REGRESSION_ARTIFACT_DIR`, then run
+`scripts/verify_x86_compact_segments.py --exports DIR --keep CHECKS --neverc NEVERC`
+for both C routes with Clang and NeverC at O0/O2. These host x64 recorders verify
+operand transport, not i386 hardware or descriptor faults. The ordinary compact
+wrapper matrix also includes all three new i386 segment prefixes. See the
+[qualification record](evidence/x86-compact-segments-2026-10-27.json).
+
 `X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
 compact/four-source, descriptor, query and atomic assembly in dynamically
 allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 54 objects
@@ -910,9 +926,14 @@ NeverC for x64; compilation does not qualify hardware rollback.
 The source checks also require the `rtm` attribute when a legacy LLVM inline
 assembly call becomes `_xabort`. A dword memory result fixes the return width
 in the immediate-byte fixtures; constant-return inference is not their oracle.
-The nonlocal-control suite now checks the integrated rel32 XBEGIN
-two-exit lift and its original abort target. rel16 remains refused; these
-checks do not qualify full transactional checkpoint or native rollback.
+The nonlocal-control suite checks both rel16 and rel32 XBEGIN two-exit
+lifting. `NeverDX86TransactionBeginTests` additionally exhausts all 65,536
+rel16 fields through full/light/lift decoding, both strictness settings and
+address widths, and checks rel32 prefix/wrap cases, malformed details and
+controlled status completions. Its i386/x64 ELF/COFF/Mach-O source regions
+retain forward and backward abort edges through LLVM and both C routes,
+default/NoOpt and C O0/O2. These checks do not qualify full transactional
+checkpoint or native rollback. See the [XBEGIN evidence](evidence/x86-xbegin-rel16-2026-10-27.json).
 `NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
 segment loads and unowned forms of 24 3DNow! operations. Its 76 and 384 valid instruction forms
 run through full, lightweight and lift decoding in strict/permissive modes.
@@ -2056,7 +2077,9 @@ and modular shifts. Check it with
 
 `SymMBAWitness.*` checks complemented degree-96/128 products at the unchanged
 work allowance, exhaustive low-six-bit carry inputs, wide words through 257
-bits, nearby parity changes and budget refusal. Concrete nonzero witnesses
+bits, nearby parity changes and budget refusal. Degree-48/65/96 near misses
+require recovery when a concrete nonzero product includes even factors.
+Concrete nonzero witnesses
 only stop futile zero searches; they never authorize a rewrite. Use
 `--family complemented-carry-product --count 108` for 432 degree-48–256 cases
 with complemented inputs, reversed factors and parity near misses. Keep all
@@ -2066,13 +2089,17 @@ routes at O0/O2.
 
 `SymMBAResiduePowers.*` checks modular power periods, even inputs, small
 exponents, independent multiplier parity and exact/short resource accounts.
+Small parity groups retain multiple residual words, and boundary cases with
+too few even factors must not discard the other branch.
 It uses complete-word multiplication through 257 bits and independent native
 width solver proofs. `--family residue-power --count 81` adds 324 degree-16–512
 cases, including immediate period neighbors and one-factor disturbances.
 These controls retain bounded refusals as results. The real CLI and worker
 source matrix also executes degree-16/64 groups with an independent multiplier
 through all six source routes at O0/O2. A degree-512 fixture also executes the
-large-product path through these same CLI and GUI-worker routes.
+large-product path through these same CLI and GUI-worker routes. A disturbed
+degree-128 fixture exercises the small parity-group path with an independent
+multiplier through the same six routes.
 
 Eligible products beyond affine expansion's 512-factor admission use bounded
 low-word representatives and multiplicity-weighted sums. Only ring and bitwise
@@ -2104,10 +2131,25 @@ Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage
 checks the shared table underneath both CLI and GUI simplification.
+`LongOperandIdentityPreservesOrderAcrossGrowthAndCopies` covers 7/8/9/16/65
+operands, ordered concatenations, commutative sums and independent full-word
+evaluation after table growth and context copies.
 `SymExpr.NativeNormalizedResultsRetainWidthBoundaries` compares both native
-evaluation entry points against independent APInt arithmetic at 1/7/8/16/32/64
-bits. Unmasked inputs, wrapping sums and products, both conditional branches,
+evaluation entry points against independent APInt arithmetic at every width
+from 1 through 64 bits. Unmasked inputs, wrapping sums and products, both
+conditional branches,
 overshifts and remainder by zero preserve the normalized scratch-slot invariant.
+`NativeLiteralOverloadsKeepEveryWidthAndWordBoundary` checks literal identity,
+constant-only plans and unchanged step counts at every width from 1 through
+257 bits. Constant plans must not request variable values.
+`SymMBAWidePairs.SharedAllowancesPreserveDecisionWorkAndMemo` checks fresh and
+previously spent request budgets, local caps under unlimited requests, zero and
+short storage, exact completion boundaries and saturated unlimited accounting.
+Outputs, work, remaining storage and completed-reading memo admission agree.
+`Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
+factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
+products. Independent complete-word multiplication and high-bit near misses
+check equality and retained input models.
 `SymMBA.DenseCoversKeepEveryCornerAndWholeWord` exhausts four-, six- and
 eight-input cover tables, including mixed literal polarities and an isolated
 negative corner. Independent bit-plane evaluation checks random complete words
@@ -2169,7 +2211,11 @@ parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor
 fixture retains variable corrections and has full-width Z3 proofs at
 8/16/32/64 bits. Short work/storage budgets check refusal without increasing
 production limits. The worker source test also executes both degree-128
-masked carry fixtures through the six CLI/worker routes at O0/O2.
+masked carry fixtures through the six CLI/worker routes at O0/O2. Odd partial
+blocks of degree 15/23/31 retain unpaired source words and low-bit disturbances.
+Tests exhaust all three six-bit inputs for a degree-15 block, check complete
+8–257-bit words and retain every factor under short work/storage allowances.
+A degree-23 machine-code fixture executes all six source routes at O0/O2.
 Quadratic carry-count tests retain both observed correction bits without
 dividing by a noninvertible word. They compare complete products with
 independent APInt arithmetic through 257 bits and Z3 proofs at 8/16/32/64 bits.
@@ -3207,6 +3253,19 @@ must reproduce its original ordering, memberships and coverage. Native SDK and
 worker cases consume the last candidates, check invalidated inventories, and
 reopen the edited report through the strict reader, including actual worker
 file save and restart.
+Overlapping-candidate regressions use an independently specified six-cycle:
+all six measured alternatives must survive, and the other three pairs must
+stay absent under direction and layout changes. Another case combines exact
+duplicates with a changed function competing for the same candidates. Native
+SDK, worker and real Qt picker cases check both directions, paging, edits and
+reopen. A separate old-library control reproduces stale inventories after
+redo; the repaired workflow checks caller detail, observations and inventory
+against the first application of the same edit.
+Duplicate-heavy inventory timing controls compare a fixed 200-row page at
+8,192 and 32,768 functions. Single-group rows must reuse normalized members,
+while the SDK's saved-order control checks canonical previews/pages without
+rewriting retained group evidence. Keep timing receipts outside correctness
+assertions; wall-clock thresholds depend on the runner.
 The CLI regression sends SIGINT during each input's actual hashing phase,
 requires exit 3 with empty result output, preserves an existing saved report,
 then runs an ordinary comparison again. Child SIGINT delivery is tested on
@@ -3905,7 +3964,9 @@ to the main window even when its previous tab group and disassembly are floating
 transient parenting for floating text, graph, pseudocode and IR views.
 `disassemblyMenuOffersTheLinesEdits` checks that the text and graph menus offer
 stack variables, the SP correction and the operand forms on an instruction,
-and array and alignment on a data item, while pseudocode offers none of them.
+and array and alignment on a data item. Pseudocode offers only its own
+function's stack variables and function edits, none of the disassembly's item
+definitions, and keeps that function after synchronization is turned off.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
 `analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
@@ -6961,7 +7022,7 @@ framed process and isolation from native-session revisions using a C++ client.
 
 `scripts.tests.test_collision_refinement` checks unpruned source admission,
 same-library cohorts across parts, independently selected release conflicts,
-opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal and
+opaque CRC spans, shorter Thumb return bodies, incomplete-record refusal, CRC-bearing return padding and
 preservation of aliases, incoming queries and metadata. They also require
 existing mandatory-reference claims to survive new raw sources, including a
 known rival name with changed references. The generation and supplement
@@ -6969,7 +7030,9 @@ suites also check byte coverage across leading/tail encodings and require every
 mandatory reference claim to survive hidden CRC counterexamples. Refinement
 cases retain alternatives in the selected sufficient single-site clause,
 jointly necessary fields and complete incoming declarations with source-version
-consensus. They also constrain cohorts together across numbered parts, so
+consensus. Existing required clauses additionally need their own complete raw
+source witness and independently sufficient image metadata; missing witnesses,
+call-only proofs and loaded required rivals retain the necessary constraints. They also constrain cohorts together across numbered parts, so
 withholding one member cannot leave an unqualified survivor.
 Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
@@ -7004,7 +7067,7 @@ bodies for contextual patterns. The Python supplement tests retain short and
 discarded counterclaims across independently selected packs.
 `SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
 entry scope, complete alternatives, variant consensus, and refusal of weak,
-partial, ambiguous, required or contradicted initial anchors. Rooted chains
+partial, ambiguous, unrooted required or contradicted initial anchors. Rooted chains
 exercise both input orders, independent frozen validation, weak intermediate
 bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
 order and reject invalid caller offsets and CRC coverage without depending on
@@ -7013,6 +7076,9 @@ ordinary callee plus a rooted incoming body or a confirmed required root,
 reversed entries and records, changed-buffer reuse, missing/weak/partial or
 ambiguous callees, incomplete source variants and absent roots. A nominal body
 settled by an earlier incoming round cannot masquerade as an independent anchor.
+Long required-parent cases reuse the same independent ordinary-callee proof,
+including reversed records and entries, changed-buffer withdrawal, missing or
+incomplete source declarations, ambiguous/weak/partial callees and entry scope.
 `SignatureDBCodePairs.*` checks complete x64 code-address fingerprints across
 two short bodies: reversed input order, live-byte changes, missing required or
 unpruned source records, insufficient combined bytes, source/leaf alternatives,
@@ -7167,6 +7233,9 @@ cost, one-bit and wide literals, shared-tree saturation, budgeted selection,
 and exhaustive three-bit equivalence with sampling disabled. `SymMBASample.*`
 compares narrow and arbitrary-width verification against the AP evaluator,
 including all operators, deterministic assignments, and unused wide inputs.
+Contiguous input windows starting at zero or after unused wide variables must
+retain the same random stream and agree with the independent AP evaluator at
+1–257 bits. Sparse windows keep their existing compact lookup coverage.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
@@ -14602,6 +14671,11 @@ including an unmatched suffix beyond the current transfer window and retry
 without consuming a matching prefix. Android's
 `OutgoingMismatchReportsStreamAndBufferOffsets` checks named sends, writes and
 variadic raw sends through the original C fixture on each available backend.
+`MismatchConnectionIdentitySurvivesAliasesAndFDReuse` checks the bound contract
+index after a declared failure, rejected admission, another connection, FD reuse
+and `dup3` replacement, including unchanged cursors after mismatches. Android's
+`MismatchKeepsConnectionIdentityAcrossFDReuse` exercises the same owner through
+named sends and variadic raw writes at O0/O2 with all relocation variants.
 
 The network fixtures also exercise TCP failure followed by connected UDP,
 IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty

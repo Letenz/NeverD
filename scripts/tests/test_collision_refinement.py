@@ -43,18 +43,19 @@ class CollisionRefinementTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"required": 1})
         self.assertIn("!refs :0000 first ^0001 original", (self.output / "runtime.npat").read_text())
 
-    def test_unrelated_reference_does_not_become_mandatory(self):
+    def test_call_only_clause_keeps_other_source_references(self):
         body = "E8........E8........C3 00 0000 000B"
         line = body + " :0000 first ^0001 identity ^0006 shared"
         source = body + " !evidence :0000 second ^0001 different ^0006 shared"
         self.run_refinement({"runtime.pat": line}, source)
         rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
         rows = [row for row in rows if row]
-        self.assertEqual([row.refs for row in rows if row.require_references], [((1, "identity"),)])
+        self.assertEqual([row.refs for row in rows if row.require_references],
+                         [((1, "identity"), (6, "shared"))])
         self.assertEqual([row.refs for row in rows if row.require_caller],
                          [((1, "identity"), (6, "shared"))])
 
-    def test_one_lowest_cost_clause_and_complete_source_consensus(self):
+    def test_call_clause_and_incoming_source_consensus_remain_separate(self):
         body = "E8........E8........C3 00 0000 000B"
         line = body + " :0000 first ^0001 first_a ^0001 first_b ^0006 original"
         source = body + " !evidence :0000 second ^0001 other ^0006 different\n"
@@ -63,7 +64,7 @@ class CollisionRefinementTests(unittest.TestCase):
         rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
         rows = [row for row in rows if row]
         self.assertEqual([row.refs for row in rows if row.require_references],
-                         [((6, "original"),)])
+                         [((1, "first_a"), (1, "first_b"), (6, "original"))])
         self.assertEqual([row.refs for row in rows if row.require_caller],
                          [((1, "first_a"), (1, "first_b"))])
 
@@ -74,7 +75,7 @@ class CollisionRefinementTests(unittest.TestCase):
         self.run_refinement({"runtime.pat": line}, source)
         rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
         self.assertEqual([row.refs for row in rows if row and row.require_references],
-                         [((1, "first_a"), (1, "first_b"))])
+                         [((1, "first_a"), (1, "first_b"), (6, "shared"))])
 
     def test_sufficient_image_metadata_precedes_a_callee_candidate(self):
         body = "E8........FF15........C3 00 0000 000C"
@@ -143,12 +144,95 @@ class CollisionRefinementTests(unittest.TestCase):
         self.assertIn("!caller :0000 first ^0001 original", (self.output / "runtime.npat").read_text())
         self.assertNotIn("!refs", (self.output / "runtime.npat").read_text())
 
+    def test_existing_required_clause_can_use_independently_sufficient_metadata(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        witness = line.replace("!refs", "!evidence")
+        rival = body + " !evidence :0000 second ^0001 different ^0007 __imp_Second"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rival)
+        rows = [builder.parse_line(text) for text in
+                (self.output / "runtime.npat").read_text().splitlines()]
+        rows = [row for row in rows if row]
+        self.assertEqual(result["counts"], {"reduced": 1})
+        self.assertEqual([row.refs for row in rows if row.require_references],
+                         [((7, "__imp_First"),)])
+        self.assertEqual([row.refs for row in rows if row.require_caller],
+                         [((1, "original"), (7, "__imp_First"))])
+
+    def test_existing_required_clause_needs_its_own_complete_source_witness(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        witness = body + " !evidence :0000 first ^0001 original"
+        rival = body + " !evidence :0000 second ^0001 different ^0007 __imp_Second"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rival)
+        self.assertEqual(result["counts"], {})
+        self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
+    def test_required_reduction_preserves_other_loaded_required_claims(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        other = body + " !refs :0000 second ^0001 different ^0007 __imp_First"
+        witness = line.replace("!refs", "!evidence")
+        rival = body + " !evidence :0000 third ^0001 original ^0007 __imp_Second"
+        self.run_refinement({"runtime.npat": line + "\n" + other}, witness + "\n" + rival)
+        rows = [builder.parse_line(text) for text in
+                (self.output / "runtime.npat").read_text().splitlines()]
+        first = [row for row in rows if row and row.names == (":0000 first",)
+                 and row.require_references]
+        self.assertEqual([row.refs for row in first],
+                         [((1, "original"), (7, "__imp_First"))])
+
+    def test_existing_required_clause_keeps_call_only_constraints(self):
+        body = "E8........E8........C3 00 0000 000B"
+        line = body + " !refs :0000 first ^0001 original ^0006 shared"
+        witness = line.replace("!refs", "!evidence")
+        rival = body + " !evidence :0000 second ^0001 different ^0006 shared"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rival)
+        self.assertEqual(result["counts"], {})
+        self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
+    def test_required_reduction_retains_a_jointly_necessary_site(self):
+        body = "E8........FF15........C3 00 0000 000C"
+        line = body + " !refs :0000 first ^0001 original ^0007 __imp_First"
+        witness = line.replace("!refs", "!evidence")
+        rivals = body + " !evidence :0000 second ^0001 original ^0007 __imp_Second\n"
+        rivals += body + " !evidence :0000 third ^0001 different ^0007 __imp_First"
+        result = self.run_refinement({"runtime.npat": line}, witness + "\n" + rivals)
+        self.assertEqual(result["counts"], {})
+        self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
     def test_existing_required_claim_survives_distinct_source_references(self):
         line = "E8........C3 00 0000 0006 !refs :0000 first ^0001 original"
         source = "E8........C3 00 0000 0006 !evidence :0000 second ^0001 different"
         result = self.run_refinement({"runtime.npat": line}, source)
         self.assertEqual(result["counts"], {})
         self.assertEqual((self.output / "runtime.npat").read_text(), line + "\n---\n")
+
+    def test_matching_crc_cannot_hide_a_shorter_return_body(self):
+        lead = "48894C24084883EC3848C7442420FEFFFFFF488B4C2440E8........90488B4C"
+        tail = "........904883C438C3"
+        line = lead + " 03 B68B 002E :0000 wrapper ^0018 throw ^0023 destroy " + tail + "CC"
+        source = lead + " 03 B68B 002D !evidence :0000 container ^0018 tidy ^0023 destroy " + tail
+        result = self.run_refinement({"runtime.pat": line}, source)
+        self.assertEqual(result["counts"], {"required": 1})
+        rows = [builder.parse_line(text) for text in
+                (self.output / "runtime.npat").read_text().splitlines()]
+        self.assertEqual([row.refs for row in rows if row and row.require_references],
+                         [((0x18, "throw"), (0x23, "destroy"))])
+
+    def test_crc_padding_requires_matching_spans_and_visible_return_and_padding(self):
+        long = builder.Shape.of("9090 02 1234 0007 C390CC")
+        short = builder.Shape.of("9090 02 1234 0005 C3")
+        self.assertTrue(long.padding_collision_with(short, machine="x64"))
+        for other in ["9090 02 4321 0005 C3", "90 03 1234 0005 C3",
+                      "9090 03 1234 0005", "9090 02 1234 0005 .."]:
+            self.assertFalse(long.padding_collision_with(builder.Shape.of(other), machine="x64"))
+        for other in ["9090 02 1234 0007 C3..CC", "9090 02 1234 0007 C301CC"]:
+            self.assertFalse(builder.Shape.of(other).padding_collision_with(short, machine="x64"))
+        self.assertFalse(long.padding_collision_with(short, machine="arm64"))
+        thumb = builder.Shape.of("0090 02 1234 0008 704700BF")
+        self.assertTrue(thumb.padding_collision_with(
+            builder.Shape.of("0090 02 1234 0006 7047"), machine="arm"))
 
     def test_thumb_padding_query_includes_shorter_literal_source_prefixes(self):
         body = "2DE9F84F0DF1200B93E8F0079047BDE8F88F"

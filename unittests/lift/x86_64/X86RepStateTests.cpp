@@ -613,7 +613,7 @@ TEST(X86RepState, MixedNativeFeaturesRetainComparisonFlagSupport) {
                               4)};
     F.Body.push_back(Statement);
   }
-  const auto Text = x86NativeFunctionPreamble(F);
+  const auto Text = x86NativeFunctionPreamble(F, Arch::X64);
   for (const char *Features :
        {"amx-tile,sgx,sahf", "amx-tile,sahf", "sgx,sahf", "sahf"})
     EXPECT_NE(Text.find(std::string("target(\"") + Features + "\")"),
@@ -651,7 +651,7 @@ TEST(X86RepState, ExportFullMatrixForIndependentOracle) {
             temporary(I == P.Contract.WordResults ? 3 : I,
                       I == P.Contract.WordResults ? 2 : P.WordBytes));
       const auto Word = "uint" + std::to_string(P.WordBytes * 8) + "_t";
-      High += x86NativeFunctionPreamble(*Call->getFunction());
+      High += x86NativeFunctionPreamble(*Call->getFunction(), A);
       High +=
           "void " + name(P) + "(const " + Word + " *in, " + Word + " *out) {\n";
       High += "uint32_t status = ((in[3] != 0) << 16) | (in[4] & "
