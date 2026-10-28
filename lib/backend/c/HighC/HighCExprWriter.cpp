@@ -1556,8 +1556,13 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         return exprStr(*Call, ParentPrec);
     }
     auto &Inner = *E.Operands[0];
-    if (Inner.Kind == ExprKind::Const)
-      return exprStr(Inner, ParentPrec);
+    // A literal printed negative would convert by sign extension; it takes
+    // the unsigned view below instead.
+    if (Inner.Kind == ExprKind::Const) {
+      std::string Literal = exprStr(Inner, ParentPrec);
+      if (!llvm::StringRef(Literal).ltrim('(').starts_with("-"))
+        return Literal;
+    }
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
     if (isPlainInteger(E.Type) && printsTruthValue(Inner))
@@ -2878,9 +2883,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // A bare -1 is an int; default argument promotions cannot make it a
     // 64-bit all-ones value. Keep the complete expression, including any
     // narrowing or zero/sign extension, before selecting its wide C carrier.
+    // Only a negative literal changes value this way. A non-negative literal
+    // takes a C type wide enough for its value, and a string or an address
+    // already passes as the pointer it names: both keep their spelling.
     if (Imm && !PointerArgument && !DefinedParam &&
         (!Prototype || I >= Prototype->ParamCount) && Op->Type &&
-        Op->Type->Kind == NdTypeKind::Int && Op->Type->Size > 4)
+        Op->Type->Kind == NdTypeKind::Int && Op->Type->Size > 4 &&
+        llvm::StringRef(Arg).starts_with("-"))
       Arg = "(" + typeToC(Op->Type) + ")" + castOperand(exprStr(*Op));
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&

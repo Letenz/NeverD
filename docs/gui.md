@@ -548,7 +548,10 @@ Strings, Ctrl+X lists the references to the selected string.
 jump (G or `g` on the command line) moves it and keeps it in front. Its
 context menu's **Text encoding** reads the text column as ASCII, UTF-8,
 UTF-16, UTF-32 or a code page; a character shows at its first byte, and wide
-characters take two columns. The choice is kept for later sessions.
+characters take two columns. The choice is kept for later sessions. A click
+on a row's address goes to the row and selects the address, which Ctrl+C or
+**Edit → Copy** then copies as shown; a click on a byte or a move with the
+keys makes Copy take bytes again.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and
 **Bookmarks** are choosers with a quick filter and sortable columns. **Jump
 anywhere** (G) takes an address, a name or an expression such as `main+0x10`
@@ -775,7 +778,11 @@ workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
 the selected lines of a disassembly, pseudocode or IR window (the current line
 when nothing is selected), the selected rows of a list with their columns
-separated by tabs, or the text selected in a field.
+separated by tabs, or the text selected in a field. As in IDA, a click on the
+word under the pointer in a disassembly line's `segment:address` prefix, with
+either button, selects that word: the segment name or the address. Ctrl+C or
+the context menu's **Copy** then copies just that word. A drag still selects
+characters, and a right click inside a selection keeps it.
 
 Export previews, Find, shortcut help, calculator results, connection and tool
 schema information, and the Pathfinder, type-library and comparison counterpart
