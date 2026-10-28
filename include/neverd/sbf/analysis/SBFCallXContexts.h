@@ -201,6 +201,7 @@ struct CallXFunctionSummary {
   size_t InputScratchWords = 0;
   size_t OutputScratchWords = 0;
   size_t OutputParameterizedWords = 0;
+  size_t OutputFieldValueExpressions = 0;
   size_t OutputMemoryCopies = 0;
 };
 
@@ -228,6 +229,7 @@ struct CallXContextReport {
   std::vector<CallXInputExpression> InputExpressions;
   std::vector<CallXInputMemoryGuard> InputMemoryGuards;
   size_t InstantiatedTargetInputExpressions = 0;
+  size_t InstantiatedStoredValueInputExpressions = 0;
 };
 
 /// Analyze complete recognized function CFGs with context-keyed summaries.

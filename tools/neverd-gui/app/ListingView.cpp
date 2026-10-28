@@ -549,6 +549,32 @@ int ListingView::columnAt(const Line &line, int x) const {
   return layout.lineAt(0).xToCursor(x - textLeft());
 }
 
+std::optional<std::pair<int, int>>
+ListingView::prefixWordAt(const Line &line, int x) const {
+  const int column = columnAt(line, x);
+  if (column >= 0 || x < arrowsWidth_)
+    return std::nullopt;
+  const int base = firstColumn(line);
+  const auto [begin, end] = tokenRange(line.prefix, column - base);
+  // The arrow gutter, the colon and the gap before the body hold no word.
+  if (begin == end || x < columnX(line, base + begin) ||
+      x >= columnX(line, base + end))
+    return std::nullopt;
+  return std::pair{base + begin, base + end};
+}
+
+bool ListingView::selectPrefixWord(int x) {
+  if (cursorLine_ < 0 || cursorLine_ >= int(lines_.size()))
+    return false;
+  const auto word = prefixWordAt(lines_[cursorLine_], x);
+  if (!word)
+    return false;
+  anchor_ = std::pair{cursorLine_, word->first};
+  cursorColumn_ = word->second;
+  viewport()->update();
+  return true;
+}
+
 int ListingView::firstColumn(const Line &line) const {
   return showPrefixes_ ? -int(line.prefix.size()) - 1 : 0;
 }
@@ -1203,6 +1229,9 @@ void ListingView::mousePressEvent(QMouseEvent *event) {
     highlight_ = lines_[index].styled.tokenAt(column);
   } else if (index != cursorLine_ || !anchor_) {
     moveCursor(index, column);
+    // The context menu's Copy then takes the address the click is on.
+    if (selectPrefixWord(int(event->position().x())))
+      emitLocation();
   }
   viewport()->update();
 }
@@ -1235,9 +1264,15 @@ void ListingView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ListingView::mouseReleaseEvent(QMouseEvent *event) {
+  const bool pressed = selecting_;
   selecting_ = false;
   if (anchor_ && *anchor_ == std::pair{cursorLine_, cursorColumn_})
     anchor_.reset();
+  // A plain click on the address prefix selects the word under it, so Ctrl+C
+  // copies the address. Selecting on release leaves a drag its own range.
+  if (pressed && !anchor_ && event->button() == Qt::LeftButton &&
+      !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)))
+    selectPrefixWord(int(event->position().x()));
   if ((event->modifiers() & Qt::ControlModifier) &&
       event->button() == Qt::LeftButton)
     if (const auto target = operandTarget())

@@ -12266,6 +12266,11 @@ admission validates both JSON and C++ input; each read emits the same v4 packet
 from explicit visible records. Opaque guest tokens share the Linux memory owner.
 No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
 
+The same owner admits a separate finite `event_log_writes` transcript. Native
+`__android_log_bwrite` and Dalvik's ServiceManager logging callback compare
+exact binary event bytes and share one consumption cursor. Write results never
+create visible reader records; omission, exhaustion and mismatch stay explicit.
+
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
 callback strings share those records; the device API-level query uses the same
@@ -13367,12 +13372,18 @@ name; successful semantic replies retain Binder identity without populating the
 cache. Missing replies remain unsupported, and an explicit null reply alone
 establishes service absence. `getService` updates StatLogger duration arrays,
 selects core/app thresholds through the shared Linux UID service, accumulates
-Java int counters and reads the independent monotonic uptime clock.
+Java int counters and reads the independent monotonic uptime clock. Slow and
+statistics logging encodes the two API 28 records through the shared ART String
+owner. `RuntimeServices::event_log_write` routes their bytes to the same ordered
+`AndroidLog` transcript as native `__android_log_bwrite`. A matched negative
+liblog result still commits subsequent Java assignments; a missing/mismatching
+write or resource stop preserves earlier assignments and stops explicitly.
 `checkService` omits these statistics updates. JNI remains a handle/ABI adapter.
 Linux Binder continues to own native device/transaction state; this Java
 projection cannot translate its keys into those handles. Local/custom Binder
 behavior, native object translation, Parcel RPC, RemoteException handling,
-EventLog output and add/list service calls remain unsupported. The volatile
+general EventLog overloads, truncation and add/list service calls remain
+unsupported. The volatile
 warning field is admitted by shared framework
 field identity; supplied DEX volatile fields retain their existing guard.
 Observed Java state reports cache identity/completeness, retained entries,

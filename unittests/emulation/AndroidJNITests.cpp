@@ -1285,6 +1285,65 @@ TEST_P(AndroidJNI, ServiceManagerExplicitRepliesShareIdentityStatisticsAndUid) {
   for (const auto &binder : observed.binder_proxies)
     EXPECT_EQ(binder.warn_on_blocking, false);
 }
+TEST_P(AndroidJNI, ServiceManagerLogsAndNativeWritesShareOneExactTranscript) {
+  Options.LinuxTime.emplace().Clocks = {{1, {5, 0}}, {7, {50, 0}}};
+  Options.Android->Properties["debug.servicemanager.slow_call_ms"] = "0";
+  Options.Android->Properties["debug.servicemanager.slow_call_core_ms"] = "0";
+  Options.Android->ObserveJavaState = true;
+  auto &state =
+      Options.Android->Application.emplace().service_manager.emplace();
+  state.cache.emplace();
+  state.manager_proxy.emplace(std::nullopt);
+  state.context_object.emplace(7);
+  state.binder_proxies = {{7, true}, {8, true}};
+  using Query =
+      mobile::dalvik::AndroidApplicationSnapshot::ServiceManager::LookupResult;
+  state.lookup_results = {{Query::Operation::Get, 7, "alpha", 8}};
+  const std::vector<NativeEventLogWrite> Writes = {
+      {{0x71, 0x82, 3, 0, 3, 2,   0,   0,   0,   0,  0,
+        2,    5,    0, 0, 0, 'a', 'l', 'p', 'h', 'a'},
+       -11},
+      {{0x70, 0x82, 3, 0, 3, 3, 0,    200,  0, 0, 0,
+        0,    1,    0, 0, 0, 0, 0x88, 0x13, 0, 0},
+       21},
+      {{123, 0, 0, 0, 0, 42, 0, 0, 0}, -11}};
+  for (unsigned Form : {0u, 1u, 2u}) {
+    Options.Android->Arguments = {Form};
+    Options.Android->EventLogWrites = Writes;
+    auto R = run("jni_service_manager_logs");
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    EXPECT_EQ(R.EventLogWritesConsumed, 3u);
+    ASSERT_TRUE(R.JavaState);
+    EXPECT_FALSE(R.JavaState->terminal);
+    for (const auto &Binder :
+         R.JavaState->framework.service_manager->binder_proxies)
+      EXPECT_EQ(Binder.warn_on_blocking, false);
+  }
+  for (unsigned Mode = 0; Mode != 4; ++Mode) {
+    Options.Android->EventLogWrites = Writes;
+    if (Mode == 0)
+      Options.Android->EventLogWrites.reset();
+    if (Mode == 1)
+      Options.Android->EventLogWrites->clear();
+    if (Mode == 2)
+      Options.Android->EventLogWrites->resize(1);
+    if (Mode == 3)
+      Options.Android->EventLogWrites->at(1).Payload.back() = 1;
+    auto R = run("jni_service_manager_logs");
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    if (Mode)
+      EXPECT_EQ(R.EventLogWritesConsumed, Mode >= 2 ? 1u : 0u);
+    else
+      EXPECT_FALSE(R.EventLogWritesConsumed);
+    ASSERT_TRUE(R.JavaState);
+    EXPECT_TRUE(R.JavaState->terminal);
+    EXPECT_EQ(R.JavaState->framework.service_manager->binder_proxies[1]
+                  .warn_on_blocking,
+              true);
+  }
+}
+
 TEST_P(AndroidJNI, ServiceManagerActiveUsesInitializeOnceWithSharedTime) {
   Options.LinuxTime.emplace().Clocks = {{7, {50, 0}}};
   Options.Android->ObserveJavaState = true;

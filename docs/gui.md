@@ -775,7 +775,11 @@ workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
 the selected lines of a disassembly, pseudocode or IR window (the current line
 when nothing is selected), the selected rows of a list with their columns
-separated by tabs, or the text selected in a field.
+separated by tabs, or the text selected in a field. As in IDA, a click on the
+word under the pointer in a disassembly line's `segment:address` prefix, with
+either button, selects that word: the segment name or the address. Ctrl+C or
+the context menu's **Copy** then copies just that word. A drag still selects
+characters, and a right click inside a selection keeps it.
 
 Export previews, Find, shortcut help, calculator results, connection and tool
 schema information, and the Pathfinder, type-library and comparison counterpart

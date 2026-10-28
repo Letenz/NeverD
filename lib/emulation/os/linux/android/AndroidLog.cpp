@@ -1,10 +1,10 @@
-//===- AndroidLog.cpp - Bounded liblog snapshot readers -----------------===//
+//===- AndroidLog.cpp - Bounded liblog snapshots and event writes --------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Independent API-28 logd reader model over explicit visible records.
+/// Independent API-28 log readers and exact finite event write results.
 /// ABI references and deliberate transport limits: docs/android-log-reader.md.
 #include "AndroidLog.h"
 
@@ -41,6 +41,59 @@ validateLogRecords(const std::optional<std::vector<NativeLogRecord>> &Records) {
     Previous = Time;
   }
   return llvm::Error::success();
+}
+
+llvm::Error validateEventLogWrites(
+    const std::optional<std::vector<NativeEventLogWrite>> &Writes) {
+  if (!Writes)
+    return llvm::Error::success();
+  if (Writes->size() > LogRecordLimit)
+    return failure("too many Android event log writes");
+  uint64_t Bytes = 0;
+  for (const auto &Write : *Writes) {
+    Bytes += Write.Payload.size() + sizeof(Write.Result);
+    if (Write.Payload.size() < 4 || Write.Payload.size() > LogPayloadLimit ||
+        Bytes > LogSnapshotLimit)
+      return failure("invalid Android event log write payload or total size");
+  }
+  return llvm::Error::success();
+}
+
+std::optional<uint32_t> Bionic::eventLogWrite(llvm::ArrayRef<uint8_t> Payload) {
+  const auto &Writes = Options.Android->EventLogWrites;
+  const char *Diagnostic = nullptr;
+  if (!Writes)
+    Diagnostic = "Android event log write contract is not supplied";
+  else if (*Result.EventLogWritesConsumed == Writes->size())
+    Diagnostic = "Android event log write contract exhausted";
+  else if (Payload !=
+           llvm::ArrayRef((*Writes)[*Result.EventLogWritesConsumed].Payload))
+    Diagnostic = "Android event log write does not match the next entry";
+  if (Diagnostic) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = Diagnostic;
+    return std::nullopt;
+  }
+  return uint32_t((*Writes)[(*Result.EventLogWritesConsumed)++].Result);
+}
+
+BionicResult Bionic::eventLogCall(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  if (A[2] > LogPayloadLimit - 4) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = "Android event log transport truncation is not modeled";
+    return std::optional<BionicValue>();
+  }
+  std::vector<uint8_t> Payload(4 + A[2]);
+  llvm::support::endian::write32le(Payload.data(), uint32_t(A[0]));
+  if (A[2]) {
+    if (auto E = access(A[1], A[2], Read))
+      return std::move(E);
+    if (auto E = CPU.read(A[1], llvm::MutableArrayRef(Payload).drop_front(4)))
+      return std::move(E);
+  }
+  auto Written = eventLogWrite(Payload);
+  return Written ? value(*Written) : BionicResult(std::optional<BionicValue>());
 }
 
 BionicResult Bionic::unsupportedLog(llvm::StringRef Detail) {

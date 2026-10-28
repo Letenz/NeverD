@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <initializer_list>
 #include <optional>
 #include <set>
 #include <string>
@@ -439,15 +440,72 @@ AndroidFramework::serviceManager(Heap &heap, const Program &program,
           uint32_t(*field(core ? "GET_SERVICE_LOG_EVERY_CALLS_CORE"
                                : "GET_SERVICE_LOG_EVERY_CALLS_NON_CORE",
                           "I")));
-      if ((time >= threshold &&
-           (signedLong(now) >
-                signedLong(*field("sLastSlowLogUptime", "J") + 5000) ||
-            signedLong(*field("sLastSlowLogActualTime", "J")) < time)) ||
-          (std::bit_cast<int32_t>(uint32_t(count)) >= interval &&
-           signedLong(now) >=
-               signedLong(*field("sLastStatsLogUptime", "J") + 5000)))
-        return unsupported(
-            "Android ServiceManager event logging is not modeled");
+      auto writeLog = [&](uint32_t tag, std::initializer_list<int32_t> values,
+                          std::optional<uint64_t> name = {}) {
+        // API 28 EventLogTags -> EventLogHelper -> liblog binary list. These
+        // two records have two/three items, so liblog retains the list header.
+        std::vector<uint8_t> payload;
+        auto append32 = [&](uint32_t value) {
+          for (unsigned shift = 0; shift != 32; shift += 8)
+            payload.push_back(uint8_t(value >> shift));
+        };
+        append32(tag);
+        payload.push_back(3); // EVENT_TYPE_LIST
+        payload.push_back(uint8_t(values.size() + name.has_value()));
+        for (int32_t value : values) {
+          tick(admit);
+          payload.push_back(0); // EVENT_TYPE_INT
+          append32(uint32_t(value));
+        }
+        if (name) {
+          // Tag (4), list header (2), int (5) and string header (5).
+          constexpr auto MaxName =
+              ::neverd::limits::dalvik::kAndroidEventLogPayloadBytes - 16;
+          std::vector<uint8_t> text{'N', 'U', 'L', 'L'};
+          if (*name) {
+            const auto object = heap.get(*name);
+            if (object->Bytes.size() / 2 > MaxName)
+              throw Stop{unsupported("Android service event log string "
+                                     "truncation is not modeled")};
+            for (size_t unit = 0; unit < object->Bytes.size(); unit += 2)
+              tick(admit);
+            text = artStringUTF8(object->Bytes);
+          }
+          if (text.size() > MaxName)
+            throw Stop{unsupported(
+                "Android service event log string truncation is not modeled")};
+          payload.push_back(2); // EVENT_TYPE_STRING
+          append32(text.size());
+          payload.insert(payload.end(), text.begin(), text.end());
+        }
+        if (!services.event_log_write)
+          throw Stop{
+              unsupported("Android event log write service is not supplied")};
+        tick(admit);
+        const auto returned = take(services.event_log_write(payload));
+        if (returned > UINT32_MAX)
+          throw Stop{unsupported(
+              "Android event log result exceeds its Java int carrier")};
+      };
+      if (time >= threshold &&
+          (signedLong(now) >
+               signedLong(*field("sLastSlowLogUptime", "J") + 5000) ||
+           signedLong(*field("sLastSlowLogActualTime", "J")) < time)) {
+        writeLog(230001, {int32_t(time / 1000)}, arguments[0]);
+        *field("sLastSlowLogUptime", "J") = now;
+        *field("sLastSlowLogActualTime", "J") = uint64_t(time);
+      }
+      if (std::bit_cast<int32_t>(uint32_t(count)) >= interval &&
+          signedLong(now) >=
+              signedLong(*field("sLastStatsLogUptime", "J") + 5000)) {
+        writeLog(230000, {std::bit_cast<int32_t>(uint32_t(count)),
+                          std::bit_cast<int32_t>(uint32_t(total)) / 1000,
+                          std::bit_cast<int32_t>(uint32_t(
+                              now - *field("sLastStatsLogUptime", "J")))});
+        count = 0;
+        total = 0;
+        *field("sLastStatsLogUptime", "J") = now;
+      }
     }
     const uint64_t args[] = {binder};
     return executeLibrary(heap,

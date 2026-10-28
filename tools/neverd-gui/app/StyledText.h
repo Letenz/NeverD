@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace neverd::gui {
 
@@ -61,6 +62,9 @@ private:
 
 /// Whole-word occurrences of \p token in \p text.
 QVector<int> tokenOccurrences(const QString &text, const QString &token);
+/// Bounds [first, second) of the identifier-like token around \p position in
+/// \p text; an empty range where no token touches it.
+std::pair<int, int> tokenRange(const QString &text, int position);
 bool isTokenCharacter(QChar c);
 
 } // namespace neverd::gui

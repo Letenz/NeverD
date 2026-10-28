@@ -438,7 +438,9 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"output_memory_copies",
          static_cast<int64_t>(Summary.OutputMemoryCopies)},
         {"output_parameterized_words",
-         static_cast<int64_t>(Summary.OutputParameterizedWords)}};
+         static_cast<int64_t>(Summary.OutputParameterizedWords)},
+        {"output_field_value_expressions",
+         static_cast<int64_t>(Summary.OutputFieldValueExpressions)}};
     if (Summary.ReturnValueExpression)
       Row["return_value_expression"] =
           static_cast<int64_t>(*Summary.ReturnValueExpression);
@@ -499,7 +501,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   const auto Translation =
       frameTranslationLimit(Program.Low.TheVersion, Program.Config);
   return llvm::json::Object{
-      {"schema", 7},
+      {"schema", 8},
       {"captured_addresses", std::move(Captures)},
       {"distinct_captures_prove_no_alias", false},
       {"frame_coordinates",
@@ -557,6 +559,8 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.SkippedNonCallXRootSpecializations)},
       {"constant_branch_successors_skipped",
        static_cast<int64_t>(Report.SkippedConstantBranchSuccessors)},
+      {"instantiated_stored_value_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedStoredValueInputExpressions)},
       {"instantiated_target_input_expressions",
        static_cast<int64_t>(Report.InstantiatedTargetInputExpressions)},
       {"target_input_expressions", std::move(Expressions)},

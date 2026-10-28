@@ -1,4 +1,4 @@
-# Android log readers
+# Android log readers and explicit event writes
 
 The Android native API-28 profile models these liblog functions over an explicit
 visible snapshot: `android_logger_list_alloc`, `android_logger_list_alloc_time`,
@@ -68,6 +68,53 @@ does not reconstruct logd credentials, sockets/FDs, pruning/chatty records,
 concurrent writes, alarms, persistent storage, or real-time streaming.
 There is no inferred permission grant based on a record's UID.
 
+## Event write contract
+
+`__android_log_bwrite` and the shared API 28 ServiceManager slow/statistics
+logging branches consume one ordered `android.event_log_writes` transcript.
+Each entry has exactly `payload` (hexadecimal bytes including the little-endian
+int32 tag) and `result` (a signed int32 liblog return value). For example:
+
+```json
+{"event_log_writes":[{"payload":"7b000000002a000000","result":9}]}
+```
+
+This supplies the result of writing tag 123 with an integer payload of 42.
+It does not assert delivery to logd. Omission leaves results unknown; `[]`
+explicitly supplies no writes. Missing input, exhaustion and a byte mismatch
+stop as unsupported without consuming that entry. Identical repeated writes
+need repeated entries. The report's `android.event_log_writes_consumed` appears
+when a transcript is supplied, including zero if no entry has been consumed.
+C++ callers use `AndroidNativeOptions::EventLogWrites` and the same validator.
+Entries contain 4..4068 bytes; at most 4096 entries and 1 MiB including four
+result bytes per entry are admitted and charged to catalogue memory.
+Validated payload hex uses the shared JSON payload accounting. The separate
+64 KiB metadata ceiling (including record/field overhead and escapes) and
+overall wire ceiling still apply, so some large C++ transcripts require fewer
+entries when supplied as JSON.
+
+The raw native call reads the exact supplied guest payload and narrows the tag
+to int32. A zero-length payload does not read its pointer. Returned values keep
+their int bits and do not change errno. Dynamic calls require the explicit
+`liblog.so` symbol catalogue, as readers do. Payload access failures preserve
+the write cursor. Native payloads larger than 4064 bytes stop explicitly;
+transport truncation is not modeled.
+
+ServiceManager uses the pinned tags 230001 (slow) and 230000 (statistics),
+binary list/int/string encoding, shared ART String conversion, Java signed
+division and wrapping counters. A null service name encodes `NULL`. Slow-log
+time uses a strict five-second comparison or a greater duration; statistics
+time uses an inclusive comparison. The slow record precedes its timestamp
+updates and the statistics record precedes counter reset. Negative liblog
+results are returned normally and ignored by ServiceManager. Work/resource
+stops preserve only earlier state changes. Strings that would require liblog
+truncation stop explicitly before the write.
+
+This finite contract supplies neither logd sockets, credentials, filtering,
+timestamps, daemon persistence nor a live reader stream. Writes do not append
+to `log_records`. General `EventLog.writeEvent` overloads, text logging and
+security/stats-buffer writes remain outside this subset.
+
 ## ABI evidence and verification
 
 The implementation is independently written from the public Android 9 contract.
@@ -82,6 +129,13 @@ References are pinned to AOSP `android-9.0.0_r1`:
 - [LogBuffer.cpp](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/logd/LogBuffer.cpp)
   and [LogTimes.cpp](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/logd/LogTimes.cpp)
   define start positioning and PID/buffer-filtered tail selection.
+- [ServiceManager.java](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/ServiceManager.java)
+  and [EventLogTags.logtags](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/EventLogTags.logtags)
+  define logging conditions, field update order and event tags.
+- [eventlog_helper.h](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/eventlog_helper.h),
+  [log_event_list.c](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/liblog/log_event_list.c)
+  and [logger_write.c](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/liblog/logger_write.c)
+  establish binary encoding, null strings and the liblog result/errno boundary.
 
 `AndroidLog.*` compiles independent O0/O2 callers with ordinary, APS2 and RELR
 relocations for Unicorn and HVF. Its byte oracle checks the complete output,
