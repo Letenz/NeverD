@@ -392,6 +392,22 @@ reusing another caller's specialized scratch snapshot. Summary JSON reports
 `output_parameterized_words` and per-edge `applied_stored_values` separately
 from the conservative may-write intervals.
 
+A full-width stored value can also retain an entry-input expression when its
+source was loaded from memory and has no complete affine origin. Generic
+callers compose those expressions before adding the callee's writes. Actual
+callers evaluate them against their pre-call memory snapshot through the same
+guarded evaluator used for target expressions, then apply the result through
+the canonical typed store. Expressions captured before a source overwrite
+retain their earlier value; a write before the load remains part of its guard.
+Complete copies preserve captured field expressions, and full-width reloads
+can recover them after a spill. Alias invalidation, partial writes, missing
+stores and incompatible expressions at joins still discard the affected fact.
+Callee-relative expression IDs cannot escape without explicit substitution,
+and frame-tagged values cannot become literal code addresses. Schema 8 adds
+`output_field_value_expressions` per summary and
+`instantiated_stored_value_input_expressions` for applied field expressions.
+The existing work, retained-state and output budgets remain in force.
+
 The symbolic origin lane uses the same complete finite domain as concrete
 registers. A register selecting several entry parameters can feed a common
 store or return after the join; nested summaries substitute every origin and
