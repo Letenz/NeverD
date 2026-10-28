@@ -85,11 +85,7 @@ const StyledSpan *StyledLine::spanAt(int position) const {
 QString StyledLine::tokenAt(int position) const {
   if (position < 0 || position > text.size())
     return {};
-  int begin = position, end = position;
-  while (begin > 0 && isTokenCharacter(text.at(begin - 1)))
-    --begin;
-  while (end < text.size() && isTokenCharacter(text.at(end)))
-    ++end;
+  const auto [begin, end] = tokenRange(text, position);
   return text.mid(begin, end - begin);
 }
 
@@ -168,6 +164,17 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
   }
   stamp_ = stamp;
   return *layout_;
+}
+
+std::pair<int, int> tokenRange(const QString &text, int position) {
+  if (position < 0 || position > text.size())
+    return {0, 0};
+  int begin = position, end = position;
+  while (begin > 0 && isTokenCharacter(text.at(begin - 1)))
+    --begin;
+  while (end < text.size() && isTokenCharacter(text.at(end)))
+    ++end;
+  return {begin, end};
 }
 
 QVector<int> tokenOccurrences(const QString &text, const QString &token) {

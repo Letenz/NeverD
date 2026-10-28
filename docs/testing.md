@@ -4525,6 +4525,11 @@ Character-selection cases drag address prefixes, assembly text, C and Go
 pseudocode, and ordinary source rows beside a folded prelude in both directions.
 They check Ctrl+C and Edit Copy, selection retention on mouse release and right
 click, Shift-arrow selection and partial first/last rows across a newline.
+`WorkbenchTests::clickingAnAddressPrefixSelectsItsWord` left- and right-clicks
+a listing row's address and segment name and copies exactly that word. Clicks
+on the arrow gutter, the colon, the gap before the body and the body itself
+leave the current line as the copy, and a drag inside the address keeps the
+characters it covers.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches

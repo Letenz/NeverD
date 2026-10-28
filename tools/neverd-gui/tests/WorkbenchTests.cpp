@@ -4472,6 +4472,97 @@ private slots:
     }
   }
 
+  void clickingAnAddressPrefixSelectsItsWord() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "fixture.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    auto *listing = bench.window->disassembly()->listing();
+    QTRY_VERIFY(listing->cursorLine());
+    listing->horizontalScrollBar()->setValue(0);
+    auto *viewport = listing->viewport();
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int height = int(std::ceil(metrics.lineSpacing()));
+    const qreal width = metrics.horizontalAdvance(QLatin1Char('M'));
+    const int gutter = int(std::ceil(width * 7));
+    const qreal left =
+        gutter + ::neverd::limits::gui_config::kListingViewTextMargin;
+    // The boundary before character \p at of \p text drawn from the prefix's
+    // left, and the middle of that character.
+    const auto before = [&](const QString &text, int at, int y) {
+      return QPoint(qRound(left + metrics.horizontalAdvance(text.left(at))), y);
+    };
+    const auto on = [&](const QString &text, int at, int y) {
+      return QPoint(qRound(left + (metrics.horizontalAdvance(text.left(at)) +
+                                   metrics.horizontalAdvance(text.left(at + 1))) /
+                                      2),
+                    y);
+    };
+    const auto click = [viewport](Qt::MouseButton button, QPoint at) {
+      QTest::mouseClick(viewport, button, Qt::NoModifier, at);
+    };
+    const auto copied = [&] {
+      clearClipboard();
+      QTest::keyClick(listing, Qt::Key_C, Qt::ControlModifier);
+      const QString keyed = clipboardText();
+      clearClipboard();
+      bench.action(ActionId::EditCopy)->trigger();
+      const QString command = clipboardText();
+      return keyed == command ? keyed : keyed + QStringLiteral(" | ") + command;
+    };
+    const auto rowAt = [&](int y) {
+      click(Qt::LeftButton, QPoint(gutter / 2, y));
+      return listing->cursorLine() ? listing->cursorLine()->prefix : QString();
+    };
+    const int y = height / 2 + height;
+    const QString prefix = rowAt(y);
+    const int colon = int(prefix.lastIndexOf(QLatin1Char(':')));
+    QVERIFY2(colon > 0, qPrintable(prefix));
+    const QString region = prefix.left(colon);
+    const QString address = prefix.mid(colon + 1);
+    QVERIFY2(address.contains(QRegularExpression("^[0-9A-F]{16}$")),
+             qPrintable(prefix));
+    QVERIFY(std::all_of(region.begin(), region.end(), isTokenCharacter));
+    // The gutter click that picked the row selects nothing.
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+
+    click(Qt::LeftButton, on(prefix, colon + 1 + int(address.size()) / 2, y));
+    QCOMPARE(listing->selectedText(), address);
+    QCOMPARE(copied(), address);
+    click(Qt::LeftButton, on(prefix, colon / 2, y));
+    QCOMPARE(listing->selectedText(), region);
+    QCOMPARE(copied(), region);
+    // Beside the words: the colon, the gap before the body and the body.
+    click(Qt::LeftButton, on(prefix, colon, y));
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+    click(Qt::LeftButton,
+          on(prefix + QLatin1Char(' '), int(prefix.size()), y));
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+    QTest::keyClick(listing, Qt::Key_Home);
+    click(Qt::LeftButton,
+          QPoint(listing->cursorViewportRect().x() + qRound(2 * width), y));
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+    QCOMPARE(copied(), listing->currentLineText());
+
+    // A right click selects the address for the context menu's Copy.
+    const int next = y + height;
+    const QString nextPrefix = rowAt(next);
+    QCOMPARE(nextPrefix.lastIndexOf(QLatin1Char(':')), colon);
+    click(Qt::RightButton, on(nextPrefix, int(nextPrefix.size()) - 1, next));
+    QCOMPARE(listing->selectedText(), nextPrefix.mid(colon + 1));
+    QCOMPARE(copied(), nextPrefix.mid(colon + 1));
+    // A drag inside the address keeps just the characters it covers.
+    dragText(viewport, before(nextPrefix, colon + 2, next),
+             before(nextPrefix, colon + 5, next));
+    QCOMPARE(listing->selectedText(), nextPrefix.mid(colon + 2, 3));
+    QCOMPARE(copied(), nextPrefix.mid(colon + 2, 3));
+  }
+
   void tabFromCodeUsesSelectedInstruction_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("native");
