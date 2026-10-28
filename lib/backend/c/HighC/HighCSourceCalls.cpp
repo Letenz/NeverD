@@ -5,6 +5,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/libc/LibCObjC.h"
@@ -15,12 +16,16 @@
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <algorithm>
 #include <stdexcept>
 
 namespace neverd {
 namespace {
+#define HIGH_C_SOURCE_CALL_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "HighCSourceCalls.def"
+
 std::string quotedRuntimeName(llvm::StringRef Name) {
   std::string Result = "\"";
   for (unsigned char Byte : Name.bytes()) {
@@ -169,16 +174,26 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     if (E.IsIndirectCall && !E.IndirectTarget)
       throw std::invalid_argument(
           "The original indirect call target is unavailable");
-    std::string Target =
-        E.IsIndirectCall
-            ? exprStr(*E.IndirectTarget)
-            : functionIdentifier(!E.CallTarget.empty() ? E.CallTarget
-                                                       : Hint.TargetName);
-    if (Target.empty())
-      throw std::invalid_argument(
-          "The original call-site target is unresolved");
-    std::string Call = "((" + declarationToC(Signature.ReturnType, Prototype) +
-                       ")(uintptr_t)(" + Target + "))(";
+    const std::string PointerType =
+        declarationToC(Signature.ReturnType, Prototype);
+    std::string Callee;
+    if (E.IsIndirectCall &&
+        E.IndirectTarget->IntrinsicId == Intrinsic::A64_AuthBranch) {
+      Callee = authenticatedCalleeStr(*E.IndirectTarget, PointerType);
+    } else {
+      const std::string Target =
+          E.IsIndirectCall
+              ? exprStr(*E.IndirectTarget)
+              : functionIdentifier(!E.CallTarget.empty() ? E.CallTarget
+                                                         : Hint.TargetName);
+      if (Target.empty())
+        throw std::invalid_argument(
+            "The original call-site target is unresolved");
+      Callee = llvm::formatv(kTypedSourceCallee, PointerType, Target).str();
+      if (E.IsIndirectCall && Opts.TheArch == Arch::AArch64)
+        Callee = aarch64PAuthRawCalleeC(Callee);
+    }
+    std::string Call = Callee + "(";
     for (unsigned I = 0; I < E.Operands.size(); ++I) {
       const auto &Argument = E.Operands[I];
       const auto Value = Argument

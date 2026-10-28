@@ -576,9 +576,13 @@ observable/memory/dead-call counterexamples and malformed LLVM bundles.
 Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
 composition; a legitimate intermediate `ptrauth.resign` is checked rather
 than mistaken for an arbitrary IA/0 call. Both sources also compile through
-the configured LLVM backend to ELF. Set
-`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine sample groups and all
-five object routes. Compiler IR identifiers are normalized for reproducible
+the configured LLVM backend to ELF for the original integer groups.
+`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks fixed f32/f64,
+exhausted FP registers, mixed integer/FP arguments, floating result bits and
+Darwin variadic tails across both keys, zero/dynamic discriminators and raw
+controls. All 30 typed groups emit actual Mach-O objects on five routes. Set
+`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer groups and
+30 typed groups with all five object routes. Compiler IR identifiers are normalized for reproducible
 exports. The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;

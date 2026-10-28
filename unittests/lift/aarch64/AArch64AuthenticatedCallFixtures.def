@@ -16,8 +16,16 @@
 #ifndef A64_CALL_WORD
 #define A64_CALL_WORD(Word, Key, Zero, TargetLR, ModifierLR)
 #endif
+#ifndef A64_CALL_TYPED_SHAPE
+#define A64_CALL_TYPED_SHAPE(Name, Parameters, ReturnBytes, Fixed)
+#endif
+#ifndef A64_CALL_TYPED_VARIANT
+#define A64_CALL_TYPED_VARIANT(Key, Zero, Raw)
+#endif
 
 A64_CALL_TEXT(kFunction, "authenticated_dispatch")
+A64_CALL_TEXT(kTypedArgument, "value")
+A64_CALL_TEXT(kTypedDirectory, "typed-{0}-{1}-{2}-{3}")
 A64_CALL_TEXT(kResolvedCallback, "resolved_callback")
 A64_CALL_TEXT(kTemporaryPrefix, "neverd-authenticated-call")
 A64_CALL_TEXT(kSourceExtension, "c")
@@ -59,6 +67,10 @@ A64_CALL_TEXT(kCompiledIR, "{0}-{1}.ll")
 A64_CALL_VALUE(unsigned, kCompilerTimeoutSeconds, 30)
 A64_CALL_VALUE(unsigned, kPathCapacity, 128)
 A64_CALL_VALUE(unsigned, kPointerBytes, 8)
+A64_CALL_VALUE(unsigned, kFloatBytes, 4)
+A64_CALL_VALUE(char, kFloatKind, 'f')
+A64_CALL_VALUE(char, kDoubleKind, 'd')
+A64_CALL_VALUE(int, kTypedTemporaryId, 128)
 A64_CALL_VALUE(uint64_t, kEntryAddress, 0x1000U)
 A64_CALL_VALUE(int, kAuthenticationTemporaryId, 64)
 A64_CALL_VALUE(int, kCallResultId, 65)
@@ -81,6 +93,20 @@ A64_CALL_WORD(0xd73f0fd1U, 1, false, true, false)
 A64_CALL_WORD(0xd73f0a1eU, 0, false, false, true)
 A64_CALL_WORD(0xd73f0e1eU, 1, false, false, true)
 
+A64_CALL_TYPED_SHAPE("f64-one", "d", 8, -1)
+A64_CALL_TYPED_SHAPE("f64-ten", "dddddddddd", 8, -1)
+A64_CALL_TYPED_SHAPE("f32-ten", "ffffffffff", 4, -1)
+A64_CALL_TYPED_SHAPE("mixed-ten", "ididididid", 8, -1)
+A64_CALL_TYPED_SHAPE("variadic-double", "iddddddddd", 8, 1)
+A64_CALL_TYPED_SHAPE("variadic-mixed", "dididididi", 4, 1)
+A64_CALL_TYPED_VARIANT(0, false, false)
+A64_CALL_TYPED_VARIANT(0, true, false)
+A64_CALL_TYPED_VARIANT(1, false, false)
+A64_CALL_TYPED_VARIANT(1, true, false)
+A64_CALL_TYPED_VARIANT(0, false, true)
+
 #undef A64_CALL_TEXT
 #undef A64_CALL_VALUE
 #undef A64_CALL_WORD
+#undef A64_CALL_TYPED_SHAPE
+#undef A64_CALL_TYPED_VARIANT

@@ -638,6 +638,8 @@ public:
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.
   TypeRef indirectCallFunctionType(const HighExpr &Call) const;
   TypeRef fixedCalleeFunctionType(const FunctionSym &Callee) const;
+  std::string authenticatedCalleeStr(const HighExpr &E,
+                                     llvm::StringRef FunctionPointerType);
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr,
                                 const TypeRef &FunctionType = nullptr);
