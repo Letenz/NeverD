@@ -12,6 +12,8 @@
 #include "neverd/dalvik/Library.h"
 #include "neverd/emulation/Limits.h"
 
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -183,7 +185,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
   }
   const auto Types = parameters(Signature);
   if (Return == 'F' || Return == 'D' ||
-      std::find(Types.begin(), Types.end(), 'F') != Types.end() ||
+      (DexMethod &&
+       std::find(Types.begin(), Types.end(), 'F') != Types.end()) ||
       std::find(Types.begin(), Types.end(), 'D') != Types.end())
     return unsupportedImport(Call);
   std::vector<uint64_t> Values;
@@ -203,6 +206,25 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       if (auto E = CPU.read(A[First] + I * 8, Bytes))
         return std::move(E);
       V = llvm::support::endian::read64le(Bytes);
+    } else if (Types[I] == 'F') {
+      auto Argument = Arguments.nextFloating();
+      if (!Argument)
+        return Argument.takeError();
+      auto Control = CPU.readRegister(CPURegister::AArch64FPCR);
+      if (!Control)
+        return Control.takeError();
+      if ((*Control)[0]) {
+        Result.Stop = ProcessStopReason::UnsupportedService;
+        Result.Diagnostic =
+            "JNI promoted float conversion requires default FPCR";
+        return std::optional<BionicValue>();
+      }
+      llvm::APFloat Promoted(llvm::APFloat::IEEEdouble(),
+                             llvm::APInt(64, *Argument));
+      bool LosesInfo;
+      Promoted.convert(llvm::APFloat::IEEEsingle(),
+                       llvm::APFloat::rmNearestTiesToEven, &LosesInfo);
+      V = Promoted.bitcastToAPInt().getZExtValue();
     } else {
       auto Argument =
           Arguments.next(Types[I] == 'L' || Types[I] == 'J' ? 8 : 4);
@@ -219,7 +241,7 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       V = uint32_t(int32_t(std::bit_cast<int8_t>(uint8_t(V))));
     if (Types[I] == 'S')
       V = uint32_t(int32_t(std::bit_cast<int16_t>(uint16_t(V))));
-    if (Types[I] == 'I')
+    if (Types[I] == 'I' || Types[I] == 'F')
       V = uint32_t(V);
     Values.push_back(V);
   }

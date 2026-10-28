@@ -13,6 +13,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <bit>
 #include <memory>
 #include <optional>
@@ -370,15 +371,12 @@ TEST(AndroidServiceManagerTest,
     s.slow_ms = 0;
     auto result = s.lookup("getService",
                            s.heap->literal(std::string(size, 'x'))->Identity);
-    EXPECT_EQ(result.stop, size == 4052 ? ExecutionStop::Returned
-                                        : ExecutionStop::Unsupported);
-    if (size == 4052) {
-      ASSERT_EQ(s.logs.size(), 1u);
-      EXPECT_EQ(s.logs[0].size(), 4068u);
-    } else {
-      EXPECT_TRUE(s.logs.empty());
-      EXPECT_NE(result.diagnostic.find("truncation"), std::string::npos);
-    }
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    ASSERT_EQ(s.logs.size(), 1u);
+    EXPECT_EQ(s.logs[0].size(), 4068u);
+    EXPECT_EQ(llvm::support::endian::read32le(s.logs[0].data() + 12), 4052u);
+    EXPECT_TRUE(std::all_of(s.logs[0].begin() + 16, s.logs[0].end(),
+                            [](uint8_t byte) { return byte == 'x'; }));
   }
   for (ExecutionStop stop :
        {ExecutionStop::Timeout, ExecutionStop::InstructionLimit,

@@ -12,6 +12,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <array>
 #include <tuple>
 
@@ -79,15 +80,12 @@ std::optional<uint32_t> Bionic::eventLogWrite(llvm::ArrayRef<uint8_t> Payload) {
 
 BionicResult Bionic::eventLogCall(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  if (A[2] > LogPayloadLimit - 4) {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic = "Android event log transport truncation is not modeled";
-    return std::optional<BionicValue>();
-  }
-  std::vector<uint8_t> Payload(4 + A[2]);
+  // logd clips the combined tag/payload iovecs before touching guest bytes.
+  const auto Length = std::min<uint64_t>(A[2], LogPayloadLimit - 4);
+  std::vector<uint8_t> Payload(4 + Length);
   llvm::support::endian::write32le(Payload.data(), uint32_t(A[0]));
-  if (A[2]) {
-    if (auto E = access(A[1], A[2], Read))
+  if (Length) {
+    if (auto E = access(A[1], Length, Read))
       return std::move(E);
     if (auto E = CPU.read(A[1], llvm::MutableArrayRef(Payload).drop_front(4)))
       return std::move(E);

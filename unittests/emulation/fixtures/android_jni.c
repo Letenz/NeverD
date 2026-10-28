@@ -1925,6 +1925,150 @@ int jni_service_manager_rpc(void) {
   return C(vm, int, 5);
 }
 extern int __android_log_bwrite(int, const void *, U64);
+static int event_log_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  int result = C(e, int, 130, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+static int event_log_call(Handle e, Ref type, Ref method, unsigned form,
+                          char kind, U64 value) {
+  const int tag = 0x12345678;
+  if (form == 2) {
+    const U64 args[] = {(unsigned)tag, value};
+    return C(e, int, 131, type, method, args);
+  }
+  if (kind == 'F') {
+    union {
+      unsigned bits;
+      float number;
+    } number = {(unsigned)value};
+    return form ? event_log_v(e, type, method, tag, (double)number.number)
+                : C(e, int, 129, type, method, tag, (double)number.number);
+  }
+  if (kind == 'I')
+    return form ? event_log_v(e, type, method, tag, (int)value)
+                : C(e, int, 129, type, method, tag, (int)value);
+  return form ? event_log_v(e, type, method, tag, value)
+              : C(e, int, 129, type, method, tag, value);
+}
+int jni_event_log(unsigned form, unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/util/EventLog");
+  const char *signatures[] = {"(II)I", "(IJ)I", "(IF)I",
+                              "(ILjava/lang/String;)I",
+                              "(I[Ljava/lang/Object;)I"};
+  Ref methods[5];
+  for (unsigned i = 0; i != 5; ++i) {
+    methods[i] = C(e, Ref, 113, type, "writeEvent", signatures[i]);
+    CHECK(methods[i]);
+  }
+  Ref object = C(e, Ref, 6, "java/lang/Object");
+  Ref integer_class = C(e, Ref, 6, "java/lang/Integer");
+  Ref long_class = C(e, Ref, 6, "java/lang/Long");
+  Ref float_class = C(e, Ref, 6, "java/lang/Float");
+  CHECK(object && integer_class && long_class && float_class);
+  Ref ctor = C(e, Ref, 33, integer_class, "<init>", "(I)V");
+  Ref integer = C(e, Ref, 28, integer_class, ctor, -7);
+  ctor = C(e, Ref, 33, long_class, "<init>", "(J)V");
+  Ref wide = stat_logger_new_v(e, long_class, ctor, (U64)0x8877665544332211);
+  ctor = C(e, Ref, 33, float_class, "<init>", "(F)V");
+  const U64 float_args[] = {0xabadbeef7fc12345};
+  union {
+    unsigned bits;
+    float number;
+  } nan = {0x7fc12345};
+  Ref floating =
+      form == 0   ? C(e, Ref, 28, float_class, ctor, (double)nan.number)
+      : form == 1 ? stat_logger_new_v(e, float_class, ctor, (double)nan.number)
+                  : C(e, Ref, 30, float_class, ctor, float_args);
+  CHECK(integer && wide && floating);
+  if (mode == 5) {
+    __asm__ volatile("msr fpcr, %0" : : "r"((U64)0x00400000));
+    if (form == 2) {
+      CHECK(event_log_call(e, type, methods[2], form, 'F', 0x3f800000) == -11);
+      return C(vm, int, 5);
+    }
+    (void)event_log_call(e, type, methods[2], form, 'F', 0x3f800000);
+    return __LINE__;
+  }
+  if (mode == 4) {
+    Ref field = C(e, Ref, 94, float_class, "value", "F");
+    CHECK(field);
+    (void)C(e, float, 102, floating, field);
+    return __LINE__; // FP JNI field returns remain explicitly unsupported.
+  }
+  if (mode == 0) {
+    CHECK(event_log_call(e, type, methods[0], form, 'I', (unsigned)-7) == -11);
+    CHECK(event_log_call(e, type, methods[1], form, 'J', 0x8877665544332211) ==
+          -11);
+    CHECK(event_log_call(e, type, methods[2], form, 'F', 0x80000000) == -11);
+    const U16 units[] = {'A', 0, 0xd83d, 0xde00};
+    Ref text = C(e, Ref, 163, units, 4);
+    CHECK(text);
+    CHECK(event_log_call(e, type, methods[3], form, 'L', text) == -11);
+    CHECK(event_log_call(e, type, methods[3], form, 'L', 0) == -11);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', 0) == -11);
+    Ref array = C(e, Ref, 172, 0, object, (Ref)0);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+    array = C(e, Ref, 172, 1, object, integer);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+    array = C(e, Ref, 172, 5, object, (Ref)0);
+    const Ref values[] = {integer, wide, floating, text};
+    for (unsigned i = 0; i != 4; ++i)
+      C(e, void, 174, array, (int)i, values[i]);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+  } else if (mode == 1) {
+    U16 units[6000];
+    for (unsigned i = 0; i != 6000; ++i)
+      units[i] = 'x';
+    Ref text = C(e, Ref, 163, units, 6000);
+    CHECK(text);
+    CHECK(event_log_call(e, type, methods[3], form, 'L', text) == -11);
+    Ref array = C(e, Ref, 172, 4, object, integer);
+    C(e, void, 174, array, 1, text);
+    C(e, void, 174, array, 3, array); // Unvisited after encoding overflow.
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -5);
+    C(e, void, 174, array, 2, array); // Visited after string truncation alone.
+    (void)event_log_call(e, type, methods[4], form, 'L', array);
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref illegal = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    CHECK(exception && C(e, int, 32, exception, illegal));
+  } else if (mode == 2) {
+    Ref array = C(e, Ref, 172, 256, object, integer);
+    C(e, void, 174, array, 255, array);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+    C(e, void, 174, array, 254, array);
+    (void)event_log_call(e, type, methods[4], form, 'L', array);
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref illegal = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    CHECK(exception && C(e, int, 32, exception, illegal));
+  } else {
+    const unsigned bits[] = {0,          0x3f800000, 1,          0x7f7fffff,
+                             0x7f800000, 0xff800000, 0x7fc12345, 0x80000001};
+    for (unsigned i = 0; i != sizeof(bits) / sizeof(bits[0]); ++i)
+      CHECK(event_log_call(e, type, methods[2], form, 'F', bits[i]) == -11);
+  }
+  const unsigned char payload[] = {0, 42, 0, 0, 0};
+  CHECK(__android_log_bwrite(123, payload, sizeof(payload)) == -11);
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
+
+int jni_event_log_explicit_va(const void *arguments) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/util/EventLog");
+  Ref method = C(e, Ref, 113, type, "writeEvent", "(IF)I");
+  CHECK(method);
+  CHECK(C(e, int, 130, type, method, arguments) == -11);
+  return C(vm, int, 5);
+}
+
 int jni_service_manager_logs(unsigned form) {
   Handle e = attach();
   CHECK(e);

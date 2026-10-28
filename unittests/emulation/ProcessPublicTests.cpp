@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "AndroidEventLogTestData.h"
 #include "DarwinAdvisoryLockTestData.h"
 #include "DarwinCallbackTestData.h"
 #include "DarwinCreatedAdvisoryLockTestData.h"
@@ -4332,6 +4333,70 @@ TEST_F(ProcessPublic, AndroidLibcCompatibilityMatchesSDKAndCLI) {
       EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
                 C.Value ? process_cli::Success : process_cli::Incomplete);
       ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidEventLogOverloadsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Variant : {"O0-none", "O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string("jni-") + Variant + ".so"))
+               .string();
+    for (unsigned Case = 0; Case != 15; ++Case) {
+      SCOPED_TRACE(Variant);
+      SCOPED_TRACE(Case);
+      const unsigned Mode = Case < 12 ? Case / 3 : 0;
+      const unsigned Form = Case < 12 ? Case % 3 : 2;
+      auto Request = llvm::cantFail(llvm::json::parse(R"({
+        "backend":"unicorn","instruction_limit":200000,
+        "android":{"initialize":false,"jni":true,"observe_java_state":true,
+                   "entry_symbol":"jni_event_log"}
+      })"));
+      auto &Android = *Request.getAsObject()->getObject(field::Android);
+      Android[field::Arguments] = llvm::json::Array{Form, Mode};
+      auto Entries = neverd::emulation::test::androidEventLogWrites(Mode);
+      const auto Count = Entries.size();
+      if (Case == 13)
+        Entries.resize(1);
+      if (Case == 14)
+        Entries[1].Payload.back() ^= 1;
+      llvm::json::Array Writes;
+      for (const auto &Entry : Entries)
+        Writes.push_back(llvm::json::Object{
+            {field::LogPayload, llvm::toHex(Entry.Payload, true)},
+            {field::Result, Entry.Result}});
+      if (Case != 12)
+        Android[field::EventLogWrites] = std::move(Writes);
+      const auto Options = jsonText(std::move(*Request.getAsObject()));
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+      const auto *Report = Parsed.getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString(field::Stop),
+                Case < 12 ? "returned" : "unsupported_service");
+      const auto *Observed = Report->getObject(field::Android);
+      ASSERT_NE(Observed, nullptr);
+      if (Case == 12)
+        EXPECT_FALSE(Observed->get(field::EventLogWritesConsumed));
+      else
+        EXPECT_EQ(Observed->getInteger(field::EventLogWritesConsumed),
+                  Case < 12 ? Count : 1);
+      if (Case < 12)
+        EXPECT_EQ(Report->getString(field::ReturnValue), "0");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                Case < 12 ? process_cli::Success : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
     }
   }
 #endif

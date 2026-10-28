@@ -272,18 +272,18 @@ TEST_P(AndroidLog, EventWriteUnknownExhaustedAndMismatchDoNotConsume) {
 
 TEST_P(AndroidLog, EventWritePayloadLimitsAndFaultsAreExplicit) {
   Options.Android->EntrySymbol = "log_event_write";
-  for (uint64_t Size : {0u, 4064u, 4065u}) {
+  for (uint64_t Size :
+       {uint64_t(0), uint64_t(4064), uint64_t(4065), UINT64_MAX}) {
     std::vector<uint8_t> Payload{0xf9, 0xff, 0xff, 0xff};
     Payload.resize(4 + std::min<uint64_t>(Size, 4064), 0xc7);
     Options.Android->EventLogWrites = {{{Payload, int32_t(Payload.size())}}};
-    Options.Android->Arguments = {Output, Size ? Output + 4096 : 0, Size, 1, 0};
+    Options.Android->Arguments = {Output, Size ? Output + 32768 - 4064 : 0,
+                                  Size, 1, 0};
     auto R =
         emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
     ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-    EXPECT_EQ(R->Stop, Size > 4064 ? ProcessStopReason::UnsupportedService
-                                   : ProcessStopReason::Returned)
-        << R->Diagnostic;
-    EXPECT_EQ(R->EventLogWritesConsumed, Size > 4064 ? 0u : 1u);
+    EXPECT_EQ(R->Stop, ProcessStopReason::Returned) << R->Diagnostic;
+    EXPECT_EQ(R->EventLogWritesConsumed, 1u);
   }
   Options.Android->Arguments = {Output, 1, 1, 1, 0};
   auto R = emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);

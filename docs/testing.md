@@ -12384,8 +12384,8 @@ patch-full binaries; use `check-neverd` for the complete aggregate.
 inclusive timing, signed wrapping/division, ART strings/nulls, ignored negative
 log results, and partial field updates at resource stops. `AndroidLog.Event*`
 and `AndroidLogOptions.Event*` cover exact write transcript admission, consumption,
-errno, dynamic providers, memory faults, empty/max payloads and unsupported
-truncation. `AndroidJNI.ServiceManagerLogsAndNativeWritesShareOneExactTranscript`
+errno, dynamic providers, memory faults, empty/max payloads and clipped-prefix
+access without reading an oversized tail. `AndroidJNI.ServiceManagerLogsAndNativeWritesShareOneExactTranscript`
 executes all three JNI forms followed by a native write against one cursor.
 `ProcessPublic.AndroidEventLogWritesMatchSDKAndCLI` compares sixteen complete
 reports at O0/O2, including missing, exhausted and mismatching transcripts.
@@ -12395,6 +12395,18 @@ CPU backends execute; unavailable backends are explicit skips.
 `ProcessPublic.AndroidEventLogPayloadBudgetMatchesSDKAndCLI` adds two complete
 reports using 257 maximum-sized entries, proving that validated payload bytes
 use the shared wire budget while metadata remains bounded separately.
+
+`AndroidEventLogTest.*` adds all five overloads, exact IEEE-754 carriers,
+boxed final values, UTF-16/ART encoding, the 255-item limit, single-item collapse,
+byte truncation and API 28 zero tails, scalar capacity, error precedence,
+work/heap limits and DEX/library equivalence. `AndroidJNI.EventLog*` covers
+ordinary/V/A calls at O0/O2, relocation variants and available CPU backends,
+including independent GP/FP save cursors, overflow stack slots, immutable
+va_list memory, malformed FP save areas, default-FPCR conversion and explicit
+unsupported floating field returns. Run the AndroidFormatting suite too when
+changing the shared argument reader. `ProcessPublic.AndroidEventLogOverloadsMatchSDKAndCLI`
+compares thirty complete reports, including unavailable/exhausted/mismatching
+write transcripts. These checks do not establish a live logd environment.
 
 Build the owning executable first, then select its label. This avoids relinking
 unrelated large semantic targets.

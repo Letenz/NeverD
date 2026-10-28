@@ -672,7 +672,8 @@ and accumulated counters using shared boot/monotonic clocks, Linux process UID
 and API 28 core/app thresholds. `checkService` omits those statistics updates.
 Slow/statistics EventLog branches require the separate, ordered
 [`android.event_log_writes` contract](android-log-reader.md#event-write-contract).
-Its bytes and signed results are shared with native `__android_log_bwrite`;
+Its bytes, truncation rules and signed results are shared with the five
+`EventLog.writeEvent` overloads and native `__android_log_bwrite`;
 missing writes remain unsupported. Local Binder objects, native object
 translation and remote exceptions remain outside this subset. With
 `observe_java_state`, the optional

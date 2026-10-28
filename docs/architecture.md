@@ -12254,7 +12254,7 @@ from explicit visible records. Opaque guest tokens share the Linux memory owner.
 No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
 
 The same owner admits a separate finite `event_log_writes` transcript. Native
-`__android_log_bwrite` and Dalvik's ServiceManager logging callback compare
+`__android_log_bwrite`, EventLog overloads and ServiceManager logging compare
 exact binary event bytes and share one consumption cursor. Write results never
 create visible reader records; omission, exhaustion and mismatch stay explicit.
 
@@ -13369,8 +13369,14 @@ write or resource stop preserves earlier assignments and stops explicitly.
 Linux Binder continues to own native device/transaction state; this Java
 projection cannot translate its keys into those handles. Local/custom Binder
 behavior, native object translation, Parcel RPC, RemoteException handling,
-general EventLog overloads, truncation and add/list service calls remain
-unsupported. The volatile
+and add/list service calls remain unsupported.
+`AndroidEventLog` owns all five writeEvent payload encodings and the API 28
+list/string truncation rules, including singleton zero tails and sticky encoding
+errors. ServiceManager reuses this owner. `AndroidArguments` independently
+tracks AAPCS64 GP/FP cursors and their shared overflow stack; JNI converts
+promoted floats under default FPCR and retains A-form float bits. Boxed value
+constructors use shared final fields; the projected Float field admits a bit
+carrier without enabling general floating DEX execution. The volatile
 warning field is admitted by shared framework
 field identity; supplied DEX volatile fields retain their existing guard.
 Observed Java state reports cache identity/completeness, retained entries,

@@ -6,6 +6,7 @@
 /// \file
 /// Original guest callers across relocation packing and CPU transports.
 //===----------------------------------------------------------------------===//
+#include "AndroidEventLogTestData.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
@@ -63,6 +64,119 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   auto R = run("jni_vm_lifecycle");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, EventLogOverloadsAndTruncationShareOneWriteTranscript) {
+  for (unsigned mode = 0; mode != 4; ++mode) {
+    for (unsigned form = 0; form != 3; ++form) {
+      SCOPED_TRACE(mode);
+      SCOPED_TRACE(form);
+      Options.Android->Arguments = {form, mode};
+      Options.Android->EventLogWrites = test::androidEventLogWrites(mode);
+      auto result = run("jni_event_log");
+      ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+      EXPECT_EQ(result.EventLogWritesConsumed,
+                Options.Android->EventLogWrites->size());
+    }
+  }
+}
+
+TEST_P(AndroidJNI, EventLogFloatFieldDoesNotReturnBitsInAGeneralRegister) {
+  Options.Android->Arguments = {2, 4};
+  Options.Android->EventLogWrites.emplace();
+  auto result = run("jni_event_log");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+      << result.Diagnostic;
+  EXPECT_EQ(result.EventLogWritesConsumed, 0u);
+  EXPECT_NE(result.Diagnostic.find("JNIEnv.102"), std::string::npos);
+}
+
+TEST_P(AndroidJNI, EventLogPromotedFloatDoesNotGuessNondefaultFPControl) {
+  for (unsigned form = 0; form != 3; ++form) {
+    Options.Android->Arguments = {form, 5};
+    Options.Android->EventLogWrites = {
+        {{{0x78, 0x56, 0x34, 0x12, 4, 0, 0, 0x80, 0x3f}, -11}}};
+    auto result = run("jni_event_log");
+    EXPECT_EQ(result.Stop, form == 2 ? ProcessStopReason::Returned
+                                     : ProcessStopReason::UnsupportedService)
+        << result.Diagnostic;
+    EXPECT_EQ(result.EventLogWritesConsumed, form == 2 ? 1u : 0u);
+    if (form != 2)
+      EXPECT_NE(result.Diagnostic.find("default FPCR"), std::string::npos);
+  }
+}
+
+TEST_P(AndroidJNI, EventLogExplicitVAListKeepsIndependentScalarCursors) {
+  constexpr uint64_t Base = 0x22000000;
+  std::vector<uint8_t> bytes(4096, 0xc7);
+  Options.Android->ObserveMemoryOnFailure = true;
+  Options.Android->ReadMemory = {{Base, bytes.size()}};
+  Options.Android->Arguments = {Base};
+  // Each FP and GP bank may be exhausted independently. Stack slots are
+  // shared, and neither va_list nor its save areas are written by the model.
+  for (unsigned stack = 0; stack != 4; ++stack) {
+    llvm::support::endian::write64le(bytes.data(), Base + 256);
+    llvm::support::endian::write64le(bytes.data() + 8, Base + 128);
+    llvm::support::endian::write64le(bytes.data() + 16, Base + 224);
+    llvm::support::endian::write32le(bytes.data() + 24,
+                                     stack & 1 ? 0 : uint32_t(-8));
+    llvm::support::endian::write32le(bytes.data() + 28,
+                                     stack & 2 ? 0 : uint32_t(-16));
+    llvm::support::endian::write64le(bytes.data() + (stack & 1 ? 256 : 120),
+                                     0x12345678);
+    // 1 + 2^-24 is exactly halfway: Java binary32 nearest-even yields 1.
+    llvm::support::endian::write64le(
+        bytes.data() + (stack & 2 ? (stack & 1 ? 264 : 256) : 208),
+        0x3ff0000010000000);
+    Options.Android->Memory = {{Base, bytes.size(), bytes}};
+    Options.Android->EventLogWrites = {
+        {{{0x78, 0x56, 0x34, 0x12, 4, 0, 0, 0x80, 0x3f}, -11}}};
+    auto result = run("jni_event_log_explicit_va");
+    ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+    EXPECT_EQ(result.EventLogWritesConsumed, 1u);
+    ASSERT_EQ(result.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(result.MemorySnapshots[0].Bytes, bytes);
+  }
+  for (unsigned invalid = 0; invalid != 5; ++invalid) {
+    llvm::support::endian::write32le(bytes.data() + 24, -8);
+    llvm::support::endian::write32le(bytes.data() + 28, invalid == 0   ? -144
+                                                        : invalid == 1 ? -1
+                                                                       : -16);
+    llvm::support::endian::write64le(bytes.data() + 16, invalid == 2
+                                                            ? Base + 225
+                                                        : invalid == 3 ? 0
+                                                                       : 16);
+    Options.Android->Memory = {{Base, bytes.size(), bytes}};
+    auto result = run("jni_event_log_explicit_va");
+    EXPECT_EQ(result.Stop, ProcessStopReason::RuntimeFailure)
+        << result.Diagnostic;
+    EXPECT_EQ(result.EventLogWritesConsumed, 0u);
+    ASSERT_EQ(result.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(result.MemorySnapshots[0].Bytes, bytes);
+  }
+}
+
+TEST_P(AndroidJNI, EventLogTranscriptFailurePreservesItsCursor) {
+  for (unsigned form = 0; form != 3; ++form) {
+    for (unsigned mode = 0; mode != 3; ++mode) {
+      Options.Android->Arguments = {form, 0};
+      Options.Android->EventLogWrites = test::androidEventLogWrites(0);
+      if (mode == 0)
+        Options.Android->EventLogWrites.reset();
+      else if (mode == 1)
+        Options.Android->EventLogWrites->resize(1);
+      else
+        Options.Android->EventLogWrites->at(1).Payload.back() ^= 1;
+      auto result = run("jni_event_log");
+      EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+          << result.Diagnostic;
+      if (mode)
+        EXPECT_EQ(result.EventLogWritesConsumed, 1u);
+      else
+        EXPECT_FALSE(result.EventLogWritesConsumed);
+    }
+  }
 }
 TEST_P(AndroidJNI, StatLoggerUsesSharedClockArraysAndRetainedLabels) {
   Options.LinuxTime.emplace().Clocks = {{7, {50, 987654321}}};

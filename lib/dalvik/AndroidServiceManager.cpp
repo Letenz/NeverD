@@ -7,6 +7,7 @@
 /// \file
 /// API 28 initialization, cached Binder identities and explicit lookup replies.
 //===----------------------------------------------------------------------===//
+#include "AndroidEventLog.h"
 #include "AndroidFramework.h"
 
 #include "neverd/dalvik/Limits.h"
@@ -442,50 +443,14 @@ AndroidFramework::serviceManager(Heap &heap, const Program &program,
                           "I")));
       auto writeLog = [&](uint32_t tag, std::initializer_list<int32_t> values,
                           std::optional<uint64_t> name = {}) {
-        // API 28 EventLogTags -> EventLogHelper -> liblog binary list. These
-        // two records have two/three items, so liblog retains the list header.
-        std::vector<uint8_t> payload;
-        auto append32 = [&](uint32_t value) {
-          for (unsigned shift = 0; shift != 32; shift += 8)
-            payload.push_back(uint8_t(value >> shift));
-        };
-        append32(tag);
-        payload.push_back(3); // EVENT_TYPE_LIST
-        payload.push_back(uint8_t(values.size() + name.has_value()));
+        AndroidEventLog log(tag);
         for (int32_t value : values) {
           tick(admit);
-          payload.push_back(0); // EVENT_TYPE_INT
-          append32(uint32_t(value));
+          log.scalar(0, uint32_t(value));
         }
-        if (name) {
-          // Tag (4), list header (2), int (5) and string header (5).
-          constexpr auto MaxName =
-              ::neverd::limits::dalvik::kAndroidEventLogPayloadBytes - 16;
-          std::vector<uint8_t> text{'N', 'U', 'L', 'L'};
-          if (*name) {
-            const auto object = heap.get(*name);
-            if (object->Bytes.size() / 2 > MaxName)
-              throw Stop{unsupported("Android service event log string "
-                                     "truncation is not modeled")};
-            for (size_t unit = 0; unit < object->Bytes.size(); unit += 2)
-              tick(admit);
-            text = artStringUTF8(object->Bytes);
-          }
-          if (text.size() > MaxName)
-            throw Stop{unsupported(
-                "Android service event log string truncation is not modeled")};
-          payload.push_back(2); // EVENT_TYPE_STRING
-          append32(text.size());
-          payload.insert(payload.end(), text.begin(), text.end());
-        }
-        if (!services.event_log_write)
-          throw Stop{
-              unsupported("Android event log write service is not supplied")};
-        tick(admit);
-        const auto returned = take(services.event_log_write(payload));
-        if (returned > UINT32_MAX)
-          throw Stop{unsupported(
-              "Android event log result exceeds its Java int carrier")};
+        if (name)
+          take(log.string(heap.get(*name).get(), admit));
+        take(log.write(services, admit));
       };
       if (time >= threshold &&
           (signedLong(now) >

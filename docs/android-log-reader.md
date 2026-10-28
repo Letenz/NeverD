@@ -93,12 +93,11 @@ Validated payload hex uses the shared JSON payload accounting. The separate
 overall wire ceiling still apply, so some large C++ transcripts require fewer
 entries when supplied as JSON.
 
-The raw native call reads the exact supplied guest payload and narrows the tag
-to int32. A zero-length payload does not read its pointer. Returned values keep
+The raw native call narrows the tag to int32 and reads at most the first
+4064 guest payload bytes, matching logd iovec clipping. A zero-length payload does not read its pointer. Returned values keep
 their int bits and do not change errno. Dynamic calls require the explicit
 `liblog.so` symbol catalogue, as readers do. Payload access failures preserve
-the write cursor. Native payloads larger than 4064 bytes stop explicitly;
-transport truncation is not modeled.
+the write cursor. Bytes beyond the clipped prefix are not accessed.
 
 ServiceManager uses the pinned tags 230001 (slow) and 230000 (statistics),
 binary list/int/string encoding, shared ART String conversion, Java signed
@@ -107,13 +106,40 @@ time uses a strict five-second comparison or a greater duration; statistics
 time uses an inclusive comparison. The slow record precedes its timestamp
 updates and the statistics record precedes counter reset. Negative liblog
 results are returned normally and ignored by ServiceManager. Work/resource
-stops preserve only earlier state changes. Strings that would require liblog
-truncation stop explicitly before the write.
+stops preserve only earlier state changes. Encoding and truncation reuse the
+same owner as the five general `EventLog.writeEvent` overloads.
+
+`EventLog.writeEvent` accepts `int`, `long`, `float`, `String` and `Object[]`.
+Arrays visit at most 255 items and accept only null, String, Integer, Long and
+Float; nested arrays and other items throw `IllegalArgumentException` before
+any write. Null String/items encode `NULL`, null arrays encode `[NULL]`, and
+zero/one-item arrays omit the list header. IEEE-754 bits and shared ART JNI
+string encoding are preserved, including NUL and surrogate units. Primitive
+Integer/Long/Float constructors retain ordinary final value fields in the
+shared heap. Wrapper factories/caches, comparison/formatting and JNI floating
+field accessors are not supplied by this addition.
+
+Strings truncate by encoded byte count, even inside a multibyte sequence.
+API 28 reserves the list header before encoding, then removes it for single
+items. Its original cursor advance after string truncation can leave one or
+two zero bytes at the end of a singleton packet; these bytes are retained.
+A scalar that does not fit is omitted atomically and stops further array
+visits. The completed prefix is still written, but the earlier `-EIO` encoding
+result takes precedence over the explicit transport result. A truncated string
+alone does not set that error, so a following invalid item still throws.
+
+JNI ordinary/V calls read promoted double values from the independent AAPCS64
+FP register/save area or shared overflow stack and convert to binary32 using
+nearest-even rounding. This conversion requires default FPCR; nondefault
+control stops before writing. A-form calls retain the low 32 jvalue bits and
+need no conversion. The shared argument reader leaves va_list and save areas
+unchanged. DEX can pass float register bits to exact library leaves; general
+floating DEX arithmetic/bodies and registered-native FP calls remain unmodeled.
 
 This finite contract supplies neither logd sockets, credentials, filtering,
 timestamps, daemon persistence nor a live reader stream. Writes do not append
-to `log_records`. General `EventLog.writeEvent` overloads, text logging and
-security/stats-buffer writes remain outside this subset.
+to `log_records`. Java event readers, text logging and security/stats-buffer
+writes remain outside this subset.
 
 ## ABI evidence and verification
 
@@ -136,6 +162,14 @@ References are pinned to AOSP `android-9.0.0_r1`:
   [log_event_list.c](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/liblog/log_event_list.c)
   and [logger_write.c](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/liblog/logger_write.c)
   establish binary encoding, null strings and the liblog result/errno boundary.
+- [logd_writer.c](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/liblog/logd_writer.c)
+  clips the tag and payload iovecs to the maximum delivered payload.
+- [reflection.cc](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/reflection.cc)
+  defines promoted variadic float conversion and raw jvalue float carriers.
+- API 28 [Integer](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Integer.java),
+  [Long](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Long.java) and
+  [Float](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Float.java)
+  define the final primitive value fields and primitive constructors.
 
 `AndroidLog.*` compiles independent O0/O2 callers with ordinary, APS2 and RELR
 relocations for Unicorn and HVF. Its byte oracle checks the complete output,
