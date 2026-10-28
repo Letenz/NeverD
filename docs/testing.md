@@ -12380,6 +12380,22 @@ patch-full binaries; use `check-neverd` for the complete aggregate.
 
 ## Incremental CTest workflow
 
+`AndroidServiceManagerTest.*` covers slow/statistics record bytes, strict versus
+inclusive timing, signed wrapping/division, ART strings/nulls, ignored negative
+log results, and partial field updates at resource stops. `AndroidLog.Event*`
+and `AndroidLogOptions.Event*` cover exact write transcript admission, consumption,
+errno, dynamic providers, memory faults, empty/max payloads and unsupported
+truncation. `AndroidJNI.ServiceManagerLogsAndNativeWritesShareOneExactTranscript`
+executes all three JNI forms followed by a native write against one cursor.
+`ProcessPublic.AndroidEventLogWritesMatchSDKAndCLI` compares sixteen complete
+reports at O0/O2, including missing, exhausted and mismatching transcripts.
+Run full Dalvik, JNI and log suites, the process-report parser suite and this
+public-interface test after changing the shared logging boundary. Available
+CPU backends execute; unavailable backends are explicit skips.
+`ProcessPublic.AndroidEventLogPayloadBudgetMatchesSDKAndCLI` adds two complete
+reports using 257 maximum-sized entries, proving that validated payload bytes
+use the shared wire budget while metadata remains bounded separately.
+
 Build the owning executable first, then select its label. This avoids relinking
 unrelated large semantic targets.
 

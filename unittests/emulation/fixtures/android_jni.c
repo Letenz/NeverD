@@ -1924,6 +1924,45 @@ int jni_service_manager_rpc(void) {
   CHECK(!C(e, U8, 228));
   return C(vm, int, 5);
 }
+extern int __android_log_bwrite(int, const void *, U64);
+int jni_service_manager_logs(unsigned form) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref get = C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  CHECK(type && get);
+  Ref count = C(e, Ref, 144, type, "sGetServiceAccumulatedCallCount", "I");
+  Ref total = C(e, Ref, 144, type, "sGetServiceAccumulatedUs", "I");
+  Ref slow = C(e, Ref, 144, type, "sLastSlowLogUptime", "J");
+  Ref actual = C(e, Ref, 144, type, "sLastSlowLogActualTime", "J");
+  Ref stats = C(e, Ref, 144, type, "sLastStatsLogUptime", "J");
+  CHECK(count && total && slow && actual && stats);
+  C(e, void, 159, type, count, 199);
+  C(e, void, 159, type, total, 1500);
+  C(e, void, 160, type, actual, ~(U64)0);
+  Ref name = C(e, Ref, 167, "alpha");
+  U64 arguments[] = {name};
+  Ref binder = form == 0   ? C(e, Ref, 114, type, get, name)
+               : form == 1 ? service_get_v(e, type, get, name)
+                           : C(e, Ref, 116, type, get, arguments);
+  CHECK(binder);
+  CHECK(C(e, int, 150, type, count) == 0);
+  CHECK(C(e, int, 150, type, total) == 0);
+  CHECK(C(e, U64, 151, type, slow) == 5000);
+  CHECK(C(e, U64, 151, type, stats) == 5000);
+  CHECK(C(e, U64, 151, type, actual) == 0);
+  CHECK(same_ref(e, binder, C(e, Ref, 114, type, get, name)));
+  CHECK(C(e, int, 150, type, count) == 1);
+  Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+  Ref warning = C(e, Ref, 94, proxy, "mWarnOnBlocking", "Z");
+  CHECK(warning && !C(e, U8, 96, binder, warning));
+  // This native write must consume the same transcript after both Java logs.
+  const unsigned char payload[] = {0, 42, 0, 0, 0};
+  CHECK(__android_log_bwrite(123, payload, sizeof(payload)) == -11);
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
 int jni_service_manager_clock(unsigned advancing) {
   Handle e = attach();
   CHECK(e);
