@@ -3636,8 +3636,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
     if (auto Backing = imageBackingAddress(*VA))
       return *Backing;
   }
-  const HighExpr *Inner =
-      ProjectImageBacking ? &E : &intrinsicOperandExpr(E);
+  const HighExpr *Inner = ProjectImageBacking ? &E : &intrinsicOperandExpr(E);
   if (!Inner)
     Inner = &E;
   if (Inner->Kind == ExprKind::BinOp &&
@@ -5953,6 +5952,20 @@ TypeRef HighCWriter::fixedCalleeFunctionType(const FunctionSym &Callee) const {
   return hasCSpelling(NdType::makePtr(Function)) ? Function : nullptr;
 }
 
+std::string
+HighCWriter::authenticatedCalleeStr(const HighExpr &E,
+                                    llvm::StringRef FunctionPointerType) {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::A64_AuthBranch ||
+      E.Operands.size() != 3 || !E.Operands[0] || !E.Operands[1] ||
+      !E.Operands[2] || E.Operands[1]->Kind != ExprKind::Const ||
+      E.Operands[1]->ConstVal > kAArch64PAuthKeyIB ||
+      Opts.TheArch != Arch::AArch64)
+    throw std::invalid_argument(kAArch64PAuthMalformedCall);
+  return aarch64PAuthAuthenticatedCalleeC(
+      FunctionPointerType, exprStr(*E.Operands[0]), exprStr(*E.Operands[1]),
+      exprStr(*E.Operands[2]));
+}
+
 std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
                                            const TypeRef &ReturnType,
                                            const TypeRef &FunctionType) {
@@ -5966,17 +5979,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
                                                 : NdType::makeVoid(),
                                      "(*)()")) +
       ")";
-  if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::A64_AuthBranch) {
-    if (E.Operands.size() != 3 || !E.Operands[0] || !E.Operands[1] ||
-        !E.Operands[2] || E.Operands[1]->Kind != ExprKind::Const ||
-        E.Operands[1]->ConstVal > kAArch64PAuthKeyIB ||
-        Opts.TheArch != Arch::AArch64)
-      throw std::invalid_argument(kAArch64PAuthMalformedCall);
-    return aarch64PAuthAuthenticatedCalleeC(
-        llvm::StringRef(CalleeType).drop_front().drop_back(),
-        exprStr(*E.Operands[0]), exprStr(*E.Operands[1]),
-        exprStr(*E.Operands[2]));
-  }
+  if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::A64_AuthBranch)
+    return authenticatedCalleeStr(
+        E, llvm::StringRef(CalleeType).drop_front().drop_back());
   if (FunctionType)
     if (auto Pointer =
             implicitPointerConversion(E, NdType::makePtr(FunctionType)))
@@ -8887,8 +8892,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
   auto IsForeignFuncletParam = [&](const HighExpr &E) {
-    if (!InEHClauseBody || !CurrentFunc ||
-        exceptionClausesUseFunctionFrame() || !isParamCopy(E))
+    if (!InEHClauseBody || !CurrentFunc || exceptionClausesUseFunctionFrame() ||
+        !isParamCopy(E))
       return false;
     const HighExpr *Src = unwrapIntegerView(&E);
     if (!Src)

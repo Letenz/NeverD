@@ -1,0 +1,24 @@
+//===- SourceCallABIFixtures.def - Darwin scalar stack layout ----*- C++
+//-*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef SOURCE_CALL_ABI_VALUE
+#define SOURCE_CALL_ABI_VALUE(Type, Name, Value)
+#endif
+#ifndef SOURCE_CALL_ABI_SPILL
+#define SOURCE_CALL_ABI_SPILL(Floating, Bytes, Offset)
+#endif
+
+SOURCE_CALL_ABI_VALUE(unsigned, kDarwinRegisterArguments, 8)
+SOURCE_CALL_ABI_VALUE(unsigned, kDarwinRegisterBytes, 8)
+SOURCE_CALL_ABI_SPILL(true, 4, 0)
+SOURCE_CALL_ABI_SPILL(true, 4, 4)
+SOURCE_CALL_ABI_SPILL(false, 8, 8)
+SOURCE_CALL_ABI_SPILL(true, 4, 16)
+SOURCE_CALL_ABI_SPILL(true, 8, 24)
+
+#undef SOURCE_CALL_ABI_VALUE
+#undef SOURCE_CALL_ABI_SPILL

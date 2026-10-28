@@ -576,10 +576,18 @@ observable/memory/dead-call counterexamples and malformed LLVM bundles.
 Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
 composition; a legitimate intermediate `ptrauth.resign` is checked rather
 than mistaken for an arbitrary IA/0 call. Both sources also compile through
-the configured LLVM backend to ELF. Set
-`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine sample groups and all
-five object routes. Compiler IR identifiers are normalized for reproducible
-exports. The compiler checks do not prove that the host enables instruction
+the configured LLVM backend to ELF for the original integer groups.
+`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks fixed f32/f64,
+exhausted FP registers, mixed integer/FP arguments, floating result bits and
+Darwin variadic tails across both keys, zero/dynamic discriminators and raw
+controls. All 30 typed groups emit actual Mach-O objects on five routes. Set
+`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer groups and
+30 typed groups with all five object routes.
+`NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
+C prototypes and refuses unsupported authenticated language bindings. Its five
+HighC variants must compile at O0/O2 with the original target and authentication.
+Compiler IR identifiers are normalized for reproducible exports.
+The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
 neither establishes the complete Apple image, FP/aggregate/variadic call or
@@ -588,6 +596,26 @@ The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10
 binds the actual model inputs and all 116 current export hashes to their source
 revisions. It records the complete rebuilt test inventory, separate X64 compiler
 control, original timeout failures and unchanged-limit serial repeats.
+The [typed-call receipt](evidence/arm64e-typed-call-abi-2026-10-28.json)
+adds 30 Darwin typed-call model guests and repeats the original 30 integer
+guests. Actual Mach-O text is copied unchanged into the controlled guest;
+compiler IR is not retargeted to ELF for the typed calls. Supplied prototypes
+cover `float`, `double` and `uint64_t` arguments with floating results, including
+fixed stack spills and Darwin variadic tails. Every argument bit and position,
+SP alignment, return bits and callback-before-fault condition is checked.
+Five recovered-native HighC variants have identical IR and objects to their
+corresponding explicit-prototype model inputs. This does not qualify automatic
+prototype recovery, narrow integer/pointer parameters, HFA/aggregate calls,
+authenticated special-language ABI, whole images or native signed unwinding.
+
+The larger Release run contains 10,838 test instances, including tests shared
+by separate executables. It records 10,568 accepted instances, 145 skips and
+125 failures reproduced with every changed runtime implementation restored to
+the tested dev base. The entire selection is not green. Six concurrent
+timeouts passed serially with the unchanged 120-second limit. Explicit x86_64
+compiler controls and a Clang 22 floating-builtin control retain their original
+failures and separate passing reports. The former Darwin overflow refusal
+assertion is replaced by exact byte/halfword/pointer stack offsets 0/2/8.
 
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.

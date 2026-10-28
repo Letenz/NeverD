@@ -10,9 +10,9 @@
 /// members of a homogeneous floating-point aggregate in V0-V7, other records
 /// of at most 16 bytes in consecutive X registers, larger ones by the address
 /// of a copy.  Values the registers no longer hold go to 8-byte stack slots;
-/// Apple's arm64 packs them by size instead, which these rules leave
-/// undescribed.  An indirect result's address travels in X8, apart from the
-/// parameters.
+/// Apple's arm64 packs fixed scalar spills by their natural size and
+/// alignment. Aggregate spills on Apple remain undescribed. An indirect
+/// result's address travels in X8, apart from the parameters.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -24,12 +24,9 @@ using namespace neverd;
 using namespace neverd::source_placement;
 
 namespace {
-constexpr uint16_t kRegisterBytes = 8;
-constexpr uint16_t kMaxRegisterRecordBytes = 16;
-/// A homogeneous floating-point aggregate has at most four members.
-constexpr size_t kMaxAggregateMembers = 4;
-/// No homogeneous aggregate is larger: four 16-byte members.
-constexpr uint16_t kMaxAggregateBytes = 64;
+#define NEVERD_AAPCS64_PLACEMENT_VALUE(Type, Name, Value)                      \
+  constexpr Type Name = Value;
+#include "SourceParameterPlacementAAPCS64.def"
 
 } // namespace
 
@@ -73,27 +70,35 @@ std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
   size_t NextInteger = 0, NextVector = 0;
   int64_t NextStack = Layout.EntryStackBase;
   bool Undescribed = false;
-  auto OnStack = [&](uint16_t Bytes, uint16_t Align, bool Indirect = false) {
+  auto OnStack = [&](uint16_t Bytes, uint16_t Align, bool Indirect = false,
+                     bool Scalar = false) {
     std::vector<SourceParameterPiece> Pieces;
-    if (F == BinaryFormat::MachO || !Align) {
+    if ((F == BinaryFormat::MachO && !Scalar) || !Align) {
       Undescribed = true;
       return Pieces;
     }
-    NextStack = static_cast<int64_t>(
-        llvm::alignTo(static_cast<uint64_t>(NextStack),
-                      std::max<uint16_t>(Align, kRegisterBytes)));
+    NextStack = static_cast<int64_t>(llvm::alignTo(
+        static_cast<uint64_t>(NextStack),
+        F == BinaryFormat::MachO ? Align
+                                 : std::max<uint16_t>(Align, kRegisterBytes)));
     Pieces.push_back(stackPiece(NextStack, 0, Bytes, Indirect));
-    NextStack += static_cast<int64_t>(llvm::alignTo(Bytes, kRegisterBytes));
+    NextStack +=
+        F == BinaryFormat::MachO
+            ? Bytes
+            : static_cast<int64_t>(llvm::alignTo(Bytes, kRegisterBytes));
     return Pieces;
   };
-  auto Integers = [&](uint16_t Bytes, bool EvenPair) {
+  auto Integers = [&](uint16_t Bytes, bool EvenPair, bool Scalar = false) {
     std::vector<SourceParameterPiece> Pieces;
     const size_t Count = (Bytes + kRegisterBytes - 1) / kRegisterBytes;
     if (EvenPair)
       NextInteger = llvm::alignTo(NextInteger, 2);
     if (NextInteger + Count > Integer.size()) {
       NextInteger = Integer.size();
-      return OnStack(Bytes, EvenPair ? 2 * kRegisterBytes : kRegisterBytes);
+      return OnStack(Bytes,
+                     Scalar ? Bytes
+                            : (EvenPair ? 2 * kRegisterBytes : kRegisterBytes),
+                     /*Indirect=*/false, Scalar);
     }
     for (size_t I = 0; I < Count; ++I) {
       const uint16_t Offset = static_cast<uint16_t>(I * kRegisterBytes);
@@ -128,13 +133,15 @@ std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
       continue;
     }
     if (isIntegerScalar(Type) && Type->Size <= 2 * kRegisterBytes) {
-      Pieces = Integers(Type->Size, Type->Size > kRegisterBytes);
+      Pieces = Integers(Type->Size, Type->Size > kRegisterBytes,
+                        Type->Size <= kRegisterBytes);
     } else if (isFloatingScalar(Type)) {
       if (NextVector < Vector.size()) {
         Pieces.push_back(registerPiece(SourceABICarrierKind::FloatingRegister,
                                        Vector[NextVector++], 0, Type->Size));
       } else {
-        Pieces = OnStack(Type->Size, Type->Size);
+        Pieces = OnStack(Type->Size, Type->Size, /*Indirect=*/false,
+                         Type->Size <= kRegisterBytes);
       }
     } else if (isRecord(Type) &&
                Type->Passing == NdRecordPassing::ByReference) {

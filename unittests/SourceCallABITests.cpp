@@ -18,6 +18,9 @@
 #include <vector>
 using namespace neverd;
 namespace {
+#define SOURCE_CALL_ABI_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#include "SourceCallABIFixtures.def"
+
 SourceCallTypeHint contract(std::vector<TypeRef> Types, int Fixed = -1) {
   SourceCallTypeHint H;
   H.CallKind = SourceCallTypeHint::Kind::Analyst;
@@ -84,6 +87,44 @@ TEST(SourceCallABI, WindowsARM64FixedScalarsKeepSeparateBanksAndStackSlots) {
   EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.FPReturnReg);
   EXPECT_EQ(Hint.Signature.ReturnLocation.ValueBytes, 8);
 }
+TEST(SourceCallABI, DarwinARM64FixedSpillsKeepNaturalSizeAndAlignment) {
+  struct Spill {
+    bool Floating;
+    unsigned Bytes;
+    int64_t Offset;
+  };
+  const Spill Spills[] = {
+#define SOURCE_CALL_ABI_SPILL(Floating, Bytes, Offset)                         \
+  {Floating, Bytes, Offset},
+#include "SourceCallABIFixtures.def"
+  };
+  std::vector<TypeRef> Types;
+  for (unsigned I = 0; I < kDarwinRegisterArguments; ++I) {
+    Types.push_back(NdType::makeInt(kDarwinRegisterBytes));
+    Types.push_back(NdType::makeFloat(kDarwinRegisterBytes));
+  }
+  const unsigned RegisterCount = Types.size();
+  for (const auto &Spill : Spills)
+    Types.push_back(Spill.Floating ? NdType::makeFloat(Spill.Bytes)
+                                   : NdType::makeInt(Spill.Bytes));
+  for (const auto Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF}) {
+    auto Hint = contract(Types);
+    std::string Diagnostic;
+    ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::AArch64, Format, Diagnostic))
+        << Diagnostic;
+    for (unsigned I = 0; I < std::size(Spills); ++I) {
+      const auto &Location =
+          Hint.Signature.Parameters[RegisterCount + I].Location;
+      EXPECT_EQ(Location.Kind, SourceABICarrierKind::Stack);
+      EXPECT_EQ(Location.EntryStackOffset, Format == BinaryFormat::MachO
+                                               ? Spills[I].Offset
+                                               : I * kDarwinRegisterBytes);
+      EXPECT_EQ(Location.ValueBytes, Spills[I].Bytes);
+    }
+  }
+}
+
 TEST(SourceCallABI, WindowsARM64VariadicsUseOneIntegerBankForAllScalars) {
   const std::vector<TypeRef> Types{NdType::makeInt(4),   NdType::makeFloat(4),
                                    NdType::makeFloat(8), NdType::makeInt(8),
