@@ -16245,6 +16245,11 @@ arguments at one site. Independent providers check call counts, arguments and
 both nested paths; a shared provider also verifies repeated actual invocations
 of one callee. `ComposedPredicateCallRunsOnce` covers the opposite case: a
 prefix call whose operands the composed predicate spells through earlier prefix
-values is the same execution and must run once. Run `NeverDHighControlFlowTests`,
-`NeverDHighCStoreForwardingTests` and `NeverDWindowsEHSourceTests`. This is a
+values is the same execution and must run once. A prefix call that a nested-if
+merge composes into its condition runs only there, whether or not the call
+names a site; `HighCPointerAddresses.ThenPredChainUndefSkipArmFoldsElse`,
+`NestedIfAndKeepsPredicateCallsAfterIndependentWork` and
+`ConsecutiveSkipGotosKeepsReloadedCallPredicate` count the calls that remain.
+Run `NeverDHighControlFlowTests`, `NeverDHighCStoreForwardingTests`,
+`NeverDWindowsEHSourceTests` and `NeverDCPointerProjectionTests`. This is a
 HighIR structuring contract; it requires no external source interface.

@@ -32483,7 +32483,9 @@ TEST(HighCPointerAddresses, NestedIfKeepsPredicateCallsFromEmptyThenElse) {
   EXPECT_NE(Source.find("arg2 == 1"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
+TEST(HighCPointerAddresses, NestedIfKeepsOtherKindCallsBeforeFieldGuard) {
+  // The body's IsKind calls read other arguments than the guard's call, so
+  // they are other executions and stay.
   HighFunc Func;
   Func.Name = "leftover_kind";
   Func.Entry = 0x140001000;
@@ -32569,7 +32571,7 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
+  EXPECT_EQ(KindCount, 3u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfKeepsSideEffectCallBeforeFieldGuard) {
@@ -32633,10 +32635,12 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
     V.TheArch = Arch::X64;
     return V;
   };
+  // The body's IsKind assignment copies the guard's call instruction.
   HighStmt Kind;
   Kind.Kind = StmtKind::Assign;
   Kind.Dst = HighExpr::makeVar(Temp(71));
   Kind.Val = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
+  Kind.Val->CallSiteAddr = 0x140001010;
   HighStmt Field;
   Field.Kind = StmtKind::Assign;
   Field.Dst = HighExpr::makeVar(Temp(76, 35));
@@ -32669,12 +32673,12 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
   Empty.Val = HighExpr::makeCall(
       "IsEmpty", 0x140002200,
       {parameter(1), HighExpr::makeVar(Temp(71)), HighExpr::makeVar(Temp(73))});
+  ExprPtr GuardKind = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
+  GuardKind->CallSiteAddr = Kind.Val->CallSiteAddr;
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(
-      NdOp::INT_NOTEQUAL,
-      HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)}),
-      HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, std::move(GuardKind),
+                                   HighExpr::makeConst(0, 4));
   Guard.Body = {Kind, Field, Inner, Undef, Empty};
   Func.Body = {Guard};
   structureIfElse(Func, 8);
