@@ -595,9 +595,12 @@ the call's `ptrauth` operand bundle, preserving the signed input even when LR
 supplied an original operand. Both C projections use auth-and-resign to the
 compiler's default function-pointer schema. A resolved display name cannot
 replace that authenticated target, and exact LLVM call prototypes remain
-exact. Explicit source call-site prototypes reuse that same target rendering,
-including floating arguments/results and a variadic fixed prefix; they cannot
-authenticate to a raw pointer and then acquire a second implicit C check.
+exact. Explicit source call-site prototypes and recovered native C prototypes
+reuse that same target rendering, including floating arguments/results and a
+variadic fixed prefix where declared. They cannot authenticate to a raw pointer
+and then acquire a second implicit C check, or replace a captured target with
+its display name. Authenticated special-language bindings without a complete
+call ABI reject explicitly.
 Ordinary raw indirect calls use a feature-gated signing bridge so an
 arm64e C compiler does not impose its default authentication on a raw BLR.
 Clang O0 can retain an intermediate resign and produce a different invalid-PAC

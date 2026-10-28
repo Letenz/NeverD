@@ -491,6 +491,67 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
     }
 }
 
+TEST(AArch64AuthenticatedCall, NativeTypesKeepTheOriginalIndirectTarget) {
+  for (const auto &Variant : TypedVariants) {
+    const auto Case = llvm::formatv(kNativeTypedDirectory, Variant.Key,
+                                    Variant.Zero, Variant.Raw)
+                          .str();
+    SCOPED_TRACE(Case);
+    auto Function = function(Variant.Key, false, 1, Variant.Raw);
+    auto &Call = Function.Blocks.front().Ops[Variant.Raw ? 0 : 1];
+    Call.Addr = kEntryAddress;
+    Call.OriginSeq = 0;
+    Call.addInput(Function.Params[2]);
+    if (!Variant.Raw && Variant.Zero)
+      Function.Blocks.front().Ops.front().Inputs[3] =
+          MedVar::makeConst(0, kPointerBytes);
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->Signature.ReturnType = NdType::makeFloat(kPointerBytes);
+    Hint->Signature.Parameters = {
+        {kTypedArgument, NdType::makeFloat(kPointerBytes)}};
+    std::string Diagnostic;
+    ASSERT_TRUE(assignAnalystCallABI(*Hint, Arch::AArch64, BinaryFormat::MachO,
+                                     Diagnostic))
+        << Diagnostic;
+    Hint->CallKind = SourceCallTypeHint::Kind::Native;
+    Hint->Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint->TargetName = kResolvedCallback;
+    Call.SourceCallHint = Hint;
+    Function.CallInfos.front().SourceCallHint = Hint;
+    auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+    walkStmts(High.Body, [&](HighStmt &Statement) {
+      forEachExpr(Statement, [&](const ExprPtr &Expression) {
+        if (Expression && Expression->SourceCallHint)
+          Expression->CallTarget = kResolvedCallback;
+      });
+    });
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.Format = BinaryFormat::MachO;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
+    EXPECT_NE(Source.find(Variant.Raw ? kRawCallMacro : kResignBuiltin),
+              std::string::npos)
+        << Source;
+    save(Case, kHighSource, Source);
+    compile(
+        Source,
+        [&](llvm::Module &Recompiled) {
+          checkBundle(Recompiled, Variant.Key, Variant.Zero, 1, Variant.Raw);
+        },
+        Case, false, true);
+    if (!Variant.Raw) {
+      Hint->Signature.Convention =
+          SourceFunctionTypeHint::ConventionKind::Swift;
+      std::string Refused;
+      llvm::raw_string_ostream RefusedOut(Refused);
+      EXPECT_THROW(HighCEmitter().emit({High}, RefusedOut, Options),
+                   std::invalid_argument);
+    }
+  }
+}
+
 TEST(AArch64AuthenticatedCall, OrdinaryRawCallsAcquireNoDefaultAuthentication) {
   const auto Function = function(0, true, 1, true);
   llvm::LLVMContext Context;

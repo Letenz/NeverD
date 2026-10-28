@@ -146,20 +146,16 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   const auto &Hint = *E.SourceCallHint;
-  if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst) {
-    std::string Diagnostic;
-    if (!Hint.AnalystSite || Hint.AnalystSite->Instruction != E.CallSiteAddr ||
-        Hint.Signature.Architecture != Opts.TheArch ||
-        !validateSourceABI(Hint.Signature, Diagnostic) ||
-        E.Operands.size() != Hint.Signature.Parameters.size())
-      throw std::invalid_argument("The call-site contract lost its original "
-                                  "occurrence or complete operands");
-    const auto &Signature = Hint.Signature;
-    const unsigned Fixed = Hint.AnalystFixedCount < 0
-                               ? Signature.Parameters.size()
-                               : Hint.AnalystFixedCount;
-    if (Fixed > Signature.Parameters.size())
-      throw std::invalid_argument("Invalid call-site variadic prefix");
+  const auto &Signature = Hint.Signature;
+  const bool AuthenticatedTarget =
+      E.IsIndirectCall && E.IndirectTarget &&
+      E.IndirectTarget->IntrinsicId == Intrinsic::A64_AuthBranch;
+  if (AuthenticatedTarget &&
+      Hint.CallKind != SourceCallTypeHint::Kind::Analyst &&
+      (Hint.CallKind != SourceCallTypeHint::Kind::Native ||
+       Signature.Convention != SourceFunctionTypeHint::ConventionKind::C))
+    throw std::invalid_argument(kUnsupportedAuthenticatedSourceCall);
+  const auto OriginalCallee = [&](unsigned Fixed, bool Variadic) {
     std::string Prototype = "(*)(";
     if (!Fixed)
       Prototype += "void";
@@ -168,7 +164,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         Prototype += ", ";
       Prototype += declarationToC(Signature.Parameters[I].Type, "");
     }
-    if (Hint.AnalystFixedCount >= 0)
+    if (Variadic)
       Prototype += ", ...";
     Prototype += ")";
     if (E.IsIndirectCall && !E.IndirectTarget)
@@ -193,6 +189,22 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (E.IsIndirectCall && Opts.TheArch == Arch::AArch64)
         Callee = aarch64PAuthRawCalleeC(Callee);
     }
+    return Callee;
+  };
+  if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst) {
+    std::string Diagnostic;
+    if (!Hint.AnalystSite || Hint.AnalystSite->Instruction != E.CallSiteAddr ||
+        Hint.Signature.Architecture != Opts.TheArch ||
+        !validateSourceABI(Hint.Signature, Diagnostic) ||
+        E.Operands.size() != Hint.Signature.Parameters.size())
+      throw std::invalid_argument("The call-site contract lost its original "
+                                  "occurrence or complete operands");
+    const unsigned Fixed = Hint.AnalystFixedCount < 0
+                               ? Signature.Parameters.size()
+                               : Hint.AnalystFixedCount;
+    if (Fixed > Signature.Parameters.size())
+      throw std::invalid_argument("Invalid call-site variadic prefix");
+    std::string Callee = OriginalCallee(Fixed, Hint.AnalystFixedCount >= 0);
     std::string Call = Callee + "(";
     for (unsigned I = 0; I < E.Operands.size(); ++I) {
       const auto &Argument = E.Operands[I];
@@ -271,7 +283,6 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     }
     return Call + "))";
   }
-  const auto &Signature = Hint.Signature;
   const bool ErrorSlot = hasSwiftErrorResult(Signature);
   const bool NativeError = isNativeSwiftErrorSourceCall(Hint, Opts.TheArch);
   if (ErrorSlot) {
@@ -1156,6 +1167,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                                               : "objc_msgSend") +
            ")";
   }
+  if (E.IsIndirectCall && Hint.CallKind == Kind::Native &&
+      Signature.Convention == SourceFunctionTypeHint::ConventionKind::C)
+    Name = OriginalCallee(Signature.Parameters.size(), false);
   std::string Call = Name + "(";
   std::string IncomingError;
   const std::string ErrorName =

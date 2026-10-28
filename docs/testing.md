@@ -582,8 +582,12 @@ exhausted FP registers, mixed integer/FP arguments, floating result bits and
 Darwin variadic tails across both keys, zero/dynamic discriminators and raw
 controls. All 30 typed groups emit actual Mach-O objects on five routes. Set
 `NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer groups and
-30 typed groups with all five object routes. Compiler IR identifiers are normalized for reproducible
-exports. The compiler checks do not prove that the host enables instruction
+30 typed groups with all five object routes.
+`NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
+C prototypes and refuses unsupported authenticated language bindings. Its five
+HighC variants must compile at O0/O2 with the original target and authentication.
+Compiler IR identifiers are normalized for reproducible exports.
+The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
 neither establishes the complete Apple image, FP/aggregate/variadic call or
