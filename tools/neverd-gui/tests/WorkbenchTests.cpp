@@ -12490,6 +12490,84 @@ private slots:
     QVERIFY(!hex->selection());
   }
 
+  void clickingAHexRowAddressSelectsIt() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->isVisible());
+    hex->setCurrent(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base + 0x21).has_value(),
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    hex->horizontalScrollBar()->setValue(0);
+    hex->verticalScrollBar()->setValue(0);
+    auto *viewport = hex->viewport();
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const qreal character = metrics.horizontalAdvance(QLatin1Char('0'));
+    const int height = int(std::ceil(metrics.lineSpacing()));
+    const qreal margin = ::neverd::limits::gui_config::kHexViewMargin;
+    // The middle of a row's address, and of its first byte after two spaces.
+    const auto address = [&](int row) {
+      return QPoint(qRound(margin + 8 * character), row * height + height / 2);
+    };
+    const auto firstByte = [&](int row) {
+      return QPoint(qRound(margin + (16 + 2 + 1) * character),
+                    row * height + height / 2);
+    };
+    const auto byteText = [hex](Address at) {
+      return QStringLiteral("%1")
+          .arg(*hex->byteAt(at), 2, 16, QLatin1Char('0'))
+          .toUpper();
+    };
+    const auto click = [viewport](Qt::MouseButton button, QPoint at,
+                                  Qt::KeyboardModifiers modifiers = {}) {
+      QTest::mouseClick(viewport, button, modifiers, at);
+    };
+    click(Qt::LeftButton, firstByte(0));
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base));
+
+    // The click goes to the row and copies its address as drawn.
+    click(Qt::LeftButton, address(1));
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x10));
+    QVERIFY(!hex->selection());
+    clearClipboard();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(clipboardText(), displayAddress(Base + 0x10, 16));
+    clearClipboard();
+    bench.action(ActionId::EditCopy)->trigger();
+    QTRY_COMPARE(clipboardText(), displayAddress(Base + 0x10, 16));
+    // A click on the byte the address went to copies the byte again.
+    click(Qt::LeftButton, firstByte(1));
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x10));
+    clearClipboard();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(clipboardText(), byteText(Base + 0x10));
+    // So does a key that moves on from the address.
+    click(Qt::LeftButton, address(2));
+    QTest::keyClick(hex, Qt::Key_Right);
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x21));
+    clearClipboard();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(clipboardText(), byteText(Base + 0x21));
+    // A right click selects the address as well; Shift extends nothing.
+    click(Qt::RightButton, address(1));
+    click(Qt::LeftButton, address(2), Qt::ShiftModifier);
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x10));
+    clearClipboard();
+    bench.action(ActionId::EditCopy)->trigger();
+    QTRY_COMPARE(clipboardText(), displayAddress(Base + 0x10, 16));
+  }
+
   void stringReferencesAndHexTextEncodings() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));

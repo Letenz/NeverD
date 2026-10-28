@@ -548,7 +548,10 @@ Strings, Ctrl+X lists the references to the selected string.
 jump (G or `g` on the command line) moves it and keeps it in front. Its
 context menu's **Text encoding** reads the text column as ASCII, UTF-8,
 UTF-16, UTF-32 or a code page; a character shows at its first byte, and wide
-characters take two columns. The choice is kept for later sessions.
+characters take two columns. The choice is kept for later sessions. A click
+on a row's address goes to the row and selects the address, which Ctrl+C or
+**Edit → Copy** then copies as shown; a click on a byte or a move with the
+keys makes Copy take bytes again.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and
 **Bookmarks** are choosers with a quick filter and sortable columns. **Jump
 anywhere** (G) takes an address, a name or an expression such as `main+0x10`
