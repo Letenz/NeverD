@@ -50,7 +50,7 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 7 covers complete function CFGs,
+every site retains dynamic fallback. Schema 8 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
@@ -118,6 +118,13 @@ write addresses, overlapping fields and uncertain absolute/frame relationships
 still invalidate facts; heap or account types imply no disjointness. Captured
 values can survive a later write when their carrier survives the ABI. Complete
 canonical loaded origins are reused before constructing a guarded expression.
+Full-width output fields can also carry a captured loaded expression across
+generic wrappers and complete copies. The actual caller binds its parameters
+and pre-call scratch before applying the resulting typed store. Summary
+`output_field_value_expressions` and
+`instantiated_stored_value_input_expressions` count this propagation separately
+from target-site coverage; they do not establish tag/payload correlation or
+path feasibility at a join.
 Complete scratch spills and reloads can retain a captured loaded expression
 across blocks. They use canonical full-width and alias invalidation; partial
 overwrites and unknown writes still lose it. Resolved syscalls clobber the r0

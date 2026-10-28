@@ -561,6 +561,16 @@ private:
       const std::array<ProvenValueSet, kRegisterCount> &OriginEntry);
   llvm::Error transferInputExpression(const MedInstruction &Instruction,
                                       ContextState &State);
+  bool inputExpressionBound(size_t Root, const ContextState &Input) const;
+  uint64_t inputEvaluationBytes(size_t Root) const;
+  llvm::Expected<ProvenValueSet>
+  evaluateInputExpression(size_t Root, const ContextState &Input,
+                          const ScratchState &EntryMemory,
+                          std::vector<CallXInputExpressionValue> &Proof);
+  llvm::Expected<size_t>
+  applyStoredExpressions(const MemoryPostconditions &Postconditions,
+                         const ContextState &Input,
+                         const ScratchState &EntryMemory, ScratchState &Output);
   llvm::Error instantiateTargetInputs(FunctionContext &Caller,
                                       const FunctionContext &Callee,
                                       const ContextState &Input,
@@ -649,6 +659,7 @@ private:
   std::map<MemoryGuardKey, size_t> MemoryGuardIndex;
   std::vector<MemoryEffects> InputMemoryGuards;
   size_t InstantiatedTargetInputExpressions = 0;
+  size_t InstantiatedStoredValueInputExpressions = 0;
   bool SpecializationBudgetExhausted = false;
   size_t Visits = 0;
   size_t CacheHits = 0;
@@ -1476,6 +1487,22 @@ ContextFlow::transferInputExpression(const MedInstruction &Instruction,
   if (Instruction.Op == Operation::Load &&
       Instruction.Semantics.MemoryWidth == kDoubleWordBitWidth) {
     std::optional<size_t> Stored;
+    const auto Addresses = substituteOrigins(
+        RegisterValue{RegisterValue::Kind::StackAddress,
+                      uint64_t{Instruction.Src} + 1, Instruction.Offset},
+        State.Origins, Program);
+    for (const auto &Address : possibleValues(Addresses)) {
+      const auto Expression = State.Postconditions.readExpression(Address);
+      if (!Expression || (Stored && *Stored != *Expression)) {
+        Stored.reset();
+        break;
+      }
+      Stored = Expression;
+    }
+    if (Stored) {
+      State.InputExpressions[Instruction.Dst] = Stored;
+      return llvm::Error::success();
+    }
     for (const auto &Base : possibleValues(State.Registers[Instruction.Src])) {
       const auto Address = effectiveAddress(Base, Instruction.Offset);
       const auto Value =
@@ -1651,8 +1678,16 @@ void ContextFlow::transferValues(const MedInstruction &Instruction,
                                  RegisterValue::Kind::SymbolicAddress;
                     }))
       StoredOrigin = State.Registers[Instruction.Src];
-    State.Postconditions.store(OriginAddress(Instruction.Dst),
-                               Instruction.Width / kBitsPerByte, StoredOrigin);
+    if (StoredOrigin.unknown() && Instruction.Form == OperandForm::StoreReg &&
+        Instruction.Width == kDoubleWordBitWidth &&
+        State.InputExpressions[Instruction.Src])
+      State.Postconditions.storeExpression(
+          OriginAddress(Instruction.Dst),
+          *State.InputExpressions[Instruction.Src]);
+    else
+      State.Postconditions.store(OriginAddress(Instruction.Dst),
+                                 Instruction.Width / kBitsPerByte,
+                                 StoredOrigin);
     MedInstruction Store = Instruction;
     if (Store.Form == OperandForm::StoreReg)
       Store.Src = Store.Dst == 0 ? 1 : 0;
@@ -1941,6 +1976,156 @@ void ContextFlow::classifyTarget(CallXContextEvidence &Evidence,
   }
 }
 
+bool ContextFlow::inputExpressionBound(size_t Root,
+                                       const ContextState &Input) const {
+  const auto Unbound = [&](size_t ID) {
+    const auto &Leaf = InputExpressions[ID];
+    return Leaf.Kind == CallXInputExpressionKind::InputRegister &&
+           Input.Registers[Leaf.Register].unknown();
+  };
+  const size_t Leaf = InputExpressionRoots[Root];
+  return !(Unbound(Leaf) ||
+           (InputExpressions[Leaf].Kind ==
+                CallXInputExpressionKind::InputAlternatives &&
+            std::any_of(InputExpressions[Leaf].Alternatives.begin(),
+                        InputExpressions[Leaf].Alternatives.end(), Unbound)));
+}
+
+uint64_t ContextFlow::inputEvaluationBytes(size_t Root) const {
+  return InputExpressions[Root].Depth *
+         (sizeof(size_t) + sizeof(CallXInputExpressionValue) +
+          2 * kCallXContextValueAlternatives * sizeof(RegisterValue));
+}
+
+llvm::Expected<ProvenValueSet> ContextFlow::evaluateInputExpression(
+    size_t Root, const ContextState &Input, const ScratchState &EntryMemory,
+    std::vector<CallXInputExpressionValue> &Proof) {
+  const size_t Depth = InputExpressions[Root].Depth;
+  std::vector<size_t> Chain;
+  Chain.reserve(Depth);
+  Chain.push_back(Root);
+  for (size_t I = 0; I < Chain.size(); ++I) {
+    const auto &Node = InputExpressions[Chain[I]];
+    if (Node.Kind == CallXInputExpressionKind::InputAlternatives)
+      Chain.insert(Chain.end(), Node.Alternatives.rbegin(),
+                   Node.Alternatives.rend());
+    else if (Node.Input)
+      Chain.push_back(*Node.Input);
+  }
+  Proof.reserve(Depth);
+  ProvenValueSet Values;
+  for (auto It = Chain.rbegin(); It != Chain.rend(); ++It) {
+    if (auto Error = visit())
+      return Error;
+    const auto &Node = InputExpressions[*It];
+    CallXInputExpressionValue Witness;
+    Witness.Expression = *It;
+    if (Node.Kind == CallXInputExpressionKind::InputRegister) {
+      Witness.Inputs = Input.Registers[Node.Register];
+      std::optional<ProvenValueSet> Output;
+      for (const auto &Value : possibleValues(Witness.Inputs)) {
+        RegisterState Actual{};
+        Actual[Node.Register] = Value;
+        const ProvenValueSet Result(substituteOrigin(
+            {RegisterValue::Kind::StackAddress, Node.Register + 1, Node.Offset},
+            Actual, Program));
+        if (!Output)
+          Output = Result;
+        else
+          Output->join(Result);
+      }
+      Values = std::move(*Output);
+    } else if (Node.Kind == CallXInputExpressionKind::Constant) {
+      Values = Node.Constant;
+    } else if (Node.Kind == CallXInputExpressionKind::InputAlternatives) {
+      std::optional<ProvenValueSet> Complete;
+      for (const auto &Leaf : Proof) {
+        if (!Complete)
+          Complete = Leaf.Values;
+        else
+          Complete->join(Leaf.Values);
+      }
+      Values = std::move(*Complete);
+      Witness.Inputs = Values;
+    } else {
+      Witness.Inputs = Values;
+      const auto &Instruction = *Index.find(Node.InstructionSlot);
+      if (Instruction.Op == Operation::Load) {
+        if (Node.MemoryGuard) {
+          const auto &Effects = InputMemoryGuards[*Node.MemoryGuard];
+          const uint64_t Bytes = EntryMemory.Values.retainedByteEstimate();
+          if (auto Error = retain(Bytes))
+            return Error;
+          const auto ReleaseMemory =
+              llvm::scope_exit([&] { RetainedBytes -= Bytes; });
+          for (size_t I = 0;
+               I < EntryMemory.Values.size() + Effects.Writes.size() + 1; ++I)
+            if (auto Error = visit())
+              return Error;
+          ScratchState Memory;
+          Memory.Values = EntryMemory.Values;
+          Effects.invalidate(Memory, Input.Registers, Program);
+          Values = loadFullWord(Instruction, Values, Memory.Values);
+        } else {
+          Values = loadFullWord(Instruction, Values, EntryMemory.Values);
+        }
+      } else {
+        std::optional<ProvenValueSet> Output;
+        for (const auto &Value : possibleValues(Values)) {
+          RegisterState Actual{};
+          Actual[Instruction.Dst] = Value;
+          applyRegisterTransfer(Instruction, Actual, Program.ExecutableImage);
+          const ProvenValueSet Result(Actual[Instruction.Dst]);
+          if (!Output)
+            Output = Result;
+          else
+            Output->join(Result);
+        }
+        Values = std::move(*Output);
+      }
+    }
+    Witness.Values = Values;
+    Proof.push_back(std::move(Witness));
+    if (Values.unknown())
+      break;
+  }
+  return Values;
+}
+
+llvm::Expected<size_t> ContextFlow::applyStoredExpressions(
+    const MemoryPostconditions &Postconditions, const ContextState &Input,
+    const ScratchState &EntryMemory, ScratchState &Output) {
+  size_t Applied = 0;
+  llvm::Error Failure = llvm::Error::success();
+  Postconditions.visitValues([&](const RegisterValue &Address,
+                                 const ProvenValueSet &,
+                                 std::optional<size_t> Expression) {
+    if (Failure || !Expression || !inputExpressionBound(*Expression, Input))
+      return;
+    const auto Destination =
+        substituteOrigins(Address, Input.Registers, Program).singleton();
+    if (Destination.ValueKind == RegisterValue::Kind::Unknown)
+      return;
+    const uint64_t Bytes = inputEvaluationBytes(*Expression);
+    if (auto Error = retain(Bytes)) {
+      Failure = std::move(Error);
+      return;
+    }
+    const auto Release = llvm::scope_exit([&] { RetainedBytes -= Bytes; });
+    std::vector<CallXInputExpressionValue> Proof;
+    auto Value =
+        evaluateInputExpression(*Expression, Input, EntryMemory, Proof);
+    if (!Value) {
+      Failure = Value.takeError();
+      return;
+    }
+    Applied += applyStoredWord(Output, Destination, *Value, Program);
+  });
+  if (Failure)
+    return std::move(Failure);
+  return Applied;
+}
+
 llvm::Error ContextFlow::instantiateTargetInputs(FunctionContext &Caller,
                                                  const FunctionContext &Callee,
                                                  const ContextState &Input,
@@ -2014,20 +2199,7 @@ llvm::Error ContextFlow::instantiateTargetInputs(FunctionContext &Caller,
         Template.Result == CallXContextResult::ProvenTargetSet)
       continue;
     const size_t Root = *Template.InputExpression;
-    const auto Unbound = [&](size_t ID) {
-      const auto &Leaf = InputExpressions[ID];
-      return Leaf.Kind == CallXInputExpressionKind::InputRegister &&
-             Input.Registers[Leaf.Register].unknown();
-    };
-    // Unary loads/affine transfers and their complete input union cannot
-    // supply a target when an entry binding is unknown. Avoid building and
-    // evaluating their proof chain with that already known result.
-    const size_t Leaf = InputExpressionRoots[Root];
-    if (Unbound(Leaf) ||
-        (InputExpressions[Leaf].Kind ==
-             CallXInputExpressionKind::InputAlternatives &&
-         std::any_of(InputExpressions[Leaf].Alternatives.begin(),
-                     InputExpressions[Leaf].Alternatives.end(), Unbound)))
+    if (!inputExpressionBound(Root, Input))
       continue;
     if (Caller.Generic) {
       if (!CheckedPath) {
@@ -2040,105 +2212,16 @@ llvm::Error ContextFlow::instantiateTargetInputs(FunctionContext &Caller,
       if (FirstCall != Template.CallXSlot)
         continue;
     }
-    const size_t Depth = InputExpressions[Root].Depth;
-    const uint64_t TemporaryBytes =
-        Depth * (sizeof(size_t) + sizeof(CallXInputExpressionValue) +
-                 2 * kCallXContextValueAlternatives * sizeof(RegisterValue));
+    const uint64_t TemporaryBytes = inputEvaluationBytes(Root);
     if (auto Error = retain(TemporaryBytes))
       return Error;
     const auto Release =
         llvm::scope_exit([&] { RetainedBytes -= TemporaryBytes; });
-    std::vector<size_t> Chain;
-    Chain.reserve(Depth);
-    Chain.push_back(Root);
-    for (size_t I = 0; I < Chain.size(); ++I) {
-      const auto &Node = InputExpressions[Chain[I]];
-      if (Node.Kind == CallXInputExpressionKind::InputAlternatives)
-        Chain.insert(Chain.end(), Node.Alternatives.rbegin(),
-                     Node.Alternatives.rend());
-      else if (Node.Input)
-        Chain.push_back(*Node.Input);
-    }
     std::vector<CallXInputExpressionValue> Proof;
-    Proof.reserve(Depth);
-    ProvenValueSet Values;
-    for (auto It = Chain.rbegin(); It != Chain.rend(); ++It) {
-      if (auto Error = visit())
-        return Error;
-      const auto &Node = InputExpressions[*It];
-      CallXInputExpressionValue Witness;
-      Witness.Expression = *It;
-      if (Node.Kind == CallXInputExpressionKind::InputRegister) {
-        Witness.Inputs = Input.Registers[Node.Register];
-        std::optional<ProvenValueSet> Output;
-        for (const auto &Value : possibleValues(Witness.Inputs)) {
-          RegisterState Actual{};
-          Actual[Node.Register] = Value;
-          const ProvenValueSet Result(
-              substituteOrigin({RegisterValue::Kind::StackAddress,
-                                Node.Register + 1, Node.Offset},
-                               Actual, Program));
-          if (!Output)
-            Output = Result;
-          else
-            Output->join(Result);
-        }
-        Values = std::move(*Output);
-      } else if (Node.Kind == CallXInputExpressionKind::Constant) {
-        Values = Node.Constant;
-      } else if (Node.Kind == CallXInputExpressionKind::InputAlternatives) {
-        std::optional<ProvenValueSet> Complete;
-        for (const auto &Leaf : Proof) {
-          if (!Complete)
-            Complete = Leaf.Values;
-          else
-            Complete->join(Leaf.Values);
-        }
-        Values = std::move(*Complete);
-        Witness.Inputs = Values;
-      } else {
-        Witness.Inputs = Values;
-        const auto &Instruction = *Index.find(Node.InstructionSlot);
-        if (Instruction.Op == Operation::Load) {
-          if (Node.MemoryGuard) {
-            const auto &Effects = InputMemoryGuards[*Node.MemoryGuard];
-            const uint64_t Bytes = Input.Scratch.Values.retainedByteEstimate();
-            if (auto Error = retain(Bytes))
-              return Error;
-            const auto ReleaseMemory =
-                llvm::scope_exit([&] { RetainedBytes -= Bytes; });
-            for (size_t I = 0;
-                 I < Input.Scratch.Values.size() + Effects.Writes.size() + 1;
-                 ++I)
-              if (auto Error = visit())
-                return Error;
-            ScratchState Memory;
-            Memory.Values = Input.Scratch.Values;
-            Effects.invalidate(Memory, Input.Registers, Program);
-            Values = loadFullWord(Instruction, Values, Memory.Values);
-          } else {
-            Values = loadFullWord(Instruction, Values, Input.Scratch.Values);
-          }
-        } else {
-          std::optional<ProvenValueSet> Output;
-          for (const auto &Value : possibleValues(Values)) {
-            RegisterState Actual{};
-            Actual[Instruction.Dst] = Value;
-            applyRegisterTransfer(Instruction, Actual, Program.ExecutableImage);
-            const ProvenValueSet Result(Actual[Instruction.Dst]);
-            if (!Output)
-              Output = Result;
-            else
-              Output->join(Result);
-          }
-          Values = std::move(*Output);
-        }
-      }
-      Witness.Values = Values;
-      Proof.push_back(std::move(Witness));
-      if (Values.unknown())
-        break;
-    }
+    auto Evaluated = evaluateInputExpression(Root, Input, Input.Scratch, Proof);
+    if (!Evaluated)
+      return Evaluated.takeError();
+    auto Values = std::move(*Evaluated);
     if (Values.unknown())
       continue;
     CallXContextEvidence Site = Template;
@@ -2567,6 +2650,47 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
       return Expression.takeError();
     ReturnExpression = *Expression;
   }
+  std::vector<std::pair<RegisterValue, size_t>> ComposedFields;
+  uint64_t ComposedBytes = 0;
+  const auto ReleaseComposed =
+      llvm::scope_exit([&] { RetainedBytes -= ComposedBytes; });
+  if (Context.Generic && Callee && Callee->Return && !Edge.LegacyRuntime) {
+    ComposedBytes = ReturnedPostconditions.size() *
+                    sizeof(decltype(ComposedFields)::value_type);
+    if (auto Error = retain(ComposedBytes)) {
+      ComposedBytes = 0;
+      return std::move(Error);
+    }
+    ComposedFields.reserve(ReturnedPostconditions.size());
+    llvm::Error Failure = llvm::Error::success();
+    ReturnedPostconditions.visitValues([&](const RegisterValue &Address,
+                                           const ProvenValueSet &Origins,
+                                           std::optional<size_t> Expression) {
+      if (Failure)
+        return;
+      if (!Expression) {
+        if (!substituteOrigins(Origins, OriginEntry, Program).unknown())
+          return;
+        auto Root = inputOriginExpression(Origins);
+        if (!Root) {
+          Failure = Root.takeError();
+          return;
+        }
+        Expression = *Root;
+      }
+      if (!Expression)
+        return;
+      auto Bound = composeReturnExpression(*Expression, State, OriginEntry);
+      if (!Bound) {
+        Failure = Bound.takeError();
+        return;
+      }
+      if (*Bound)
+        ComposedFields.emplace_back(Address, **Bound);
+    });
+    if (Failure)
+      return std::move(Failure);
+  }
   if (Collect) {
     if (!Callee || Edge.LegacyRuntime)
       Context.Effects.Unknown = true;
@@ -2631,6 +2755,18 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
                                          Program);
       Edge.AppliedStoredValues = ReturnedPostconditions.apply(
           ReturnScratch, ValueEntry.Registers, Program, &State.Scratch);
+      auto Stored = applyStoredExpressions(ReturnedPostconditions, ValueEntry,
+                                           State.Scratch, ReturnScratch);
+      if (!Stored)
+        return Stored.takeError();
+      Edge.AppliedStoredValues += *Stored;
+      if (Collect)
+        InstantiatedStoredValueInputExpressions += *Stored;
+      // IDs belong to the callee's entry. Consume them against its actual
+      // entry snapshot, then keep only explicitly composed caller IDs.
+      ReturnedPostconditions.discardExpressions();
+      for (const auto &[Address, Expression] : ComposedFields)
+        ReturnedPostconditions.storeExpression(Address, Expression);
       // Only generic mode tracks the complete entry-relative write history.
       // A specialized caller can consume this copy against its current memory,
       // but must not later replay it against its own earlier entry snapshot.
@@ -3422,6 +3558,8 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
         }
       Summary.OutputScratchWords = Context->Return->Scratch.Values.size();
       Summary.OutputParameterizedWords = Context->Return->Postconditions.size();
+      Summary.OutputFieldValueExpressions =
+          Context->Return->Postconditions.expressionCount();
     }
     Summary.OutputMemoryCopies =
         Context->Return ? Context->Return->Postconditions.copyCount() : 0;
@@ -3454,6 +3592,7 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
     ReturnInputElements += Summary.ReturnInputAlternatives.size();
     // Charge the added public metadata while the private summaries still live.
     if (auto Error = retain(sizeof(Summary.ReturnValueExpression) +
+                            sizeof(Summary.OutputFieldValueExpressions) +
                             sizeof(Summary.ReturnInputAlternatives) +
                             Summary.ReturnInputAlternatives.capacity() *
                                 sizeof(CallXInputExpression)))
@@ -3514,6 +3653,8 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
   }
   Report.InstantiatedTargetInputExpressions =
       InstantiatedTargetInputExpressions;
+  Report.InstantiatedStoredValueInputExpressions =
+      InstantiatedStoredValueInputExpressions;
   return Report;
 }
 
