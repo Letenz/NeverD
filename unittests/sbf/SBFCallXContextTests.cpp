@@ -4894,8 +4894,8 @@ TEST(SBFCallXContexts, LoadedFieldValuesCrossGeneralizedOutputWrappers) {
               Args[0] < kHeapStart || Args[0] - kHeapStart > Count * 16 - 8 ||
               Args[1] < kHeapStart || Args[1] - kHeapStart > Count * 16 - 8)
             return SyscallOutcome::unregistered();
-          std::memmove(Bytes + Args[0] - kHeapStart,
-                       Bytes + Args[1] - kHeapStart, 8);
+          std::memmove(Bytes + (Args[0] - kHeapStart),
+                       Bytes + (Args[1] - kHeapStart), 8);
           return SyscallOutcome::returned(0);
         };
       }
